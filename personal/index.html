@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mi Lavado de Manos</title>
+<meta name="theme-color" content="#1C7F47">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Lavado">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Atkinson+Hyperlegible+Mono:wght@500;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
+<style>
+:root{
+  --bg:#F2F5F7;--surface:#FFFFFF;--ink:#13222D;--muted:#5A6B76;--line:#D7E0E5;--accent:#1F4E79;--accent-ink:#FFFFFF;
+  --ok:#1C7F47;--ok-bg:#E2F3E9;--warn:#9A6212;--warn-bg:#FCEFD3;--bad:#B4322A;--bad-bg:#FADFDB;--off:#8A99A3;--off-bg:#E9EEF1;
+  --f-display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --f-body:"Atkinson Hyperlegible","Segoe UI",system-ui,sans-serif;
+  --f-num:"Atkinson Hyperlegible Mono",ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0D151B;--surface:#15212A;--ink:#E4EDF1;--muted:#93A4AE;--line:#26343E;--accent:#82B6E8;--accent-ink:#0D151B;
+  --ok:#5CC98D;--ok-bg:#11301F;--warn:#F2B755;--warn-bg:#33270E;--bad:#F27D71;--bad-bg:#3B1A16;--off:#6C7C86;--off-bg:#1B2832;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:17px/1.5 var(--f-body);-webkit-tap-highlight-color:transparent}
+.wrap{max-width:520px;margin:0 auto;padding:max(14px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(28px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:16px}
+h1{font:800 1.6rem/1.1 var(--f-display);margin:0;text-wrap:balance}
+.lbl{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700}
+.muted{color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px}
+.btn{border:0;background:var(--accent);color:var(--accent-ink);font:700 1.05rem var(--f-body);padding:14px 18px;border-radius:12px;cursor:pointer;width:100%}
+.btn.big{padding:22px;font-size:1.3rem;border-radius:16px}
+.btn.go{background:var(--ok);color:#fff}
+.btn.ghost{background:none;color:var(--ink);border:1px solid var(--line)}
+.btn.link{background:none;color:var(--muted);padding:8px;width:auto;font-weight:400;text-decoration:underline}
+.btn:disabled{opacity:.55}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+input{font:1.4rem var(--f-num);letter-spacing:.25em;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);width:100%;text-align:center}
+.field{display:flex;flex-direction:column;gap:6px}
+.err{color:var(--bad);font-weight:700;min-height:1.5em;margin:0}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.head .nm{font:800 1.35rem/1.15 var(--f-display);overflow-wrap:anywhere}
+.ringbox{display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 16px;border-radius:20px}
+.ring{position:relative;width:min(70vw,250px);aspect-ratio:1}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.ring .t{font:700 clamp(2.2rem,11vw,3.2rem)/1 var(--f-num);font-variant-numeric:tabular-nums}
+.ring .s{font-size:.9rem;font-weight:700;margin-top:6px}
+.state-ok{background:var(--ok-bg);color:var(--ok)}
+.state-warn{background:var(--warn-bg);color:var(--warn)}
+.state-bad{background:var(--bad-bg);color:var(--bad)}
+.state-off{background:var(--off-bg);color:var(--muted)}
+.msg{font-weight:700;text-align:center;font-size:1.05rem}
+@media (prefers-reduced-motion:no-preference){.state-bad .ring{animation:beat 1.2s ease-in-out infinite}}
+@keyframes beat{50%{transform:scale(1.04)}}
+.row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:.95rem}
+.row:first-of-type{border-top:0}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.pill{font-size:.78rem;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap}
+.steps{margin:8px 0 0;padding-left:1.2em}
+.steps li{margin:4px 0}
+.overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:24px;z-index:30;font:800 clamp(1.8rem,8vw,2.6rem)/1.15 var(--f-display)}
+.overlay small{font:700 1.05rem var(--f-body)}
+.modal{position:fixed;inset:0;background:rgba(10,18,24,.55);display:flex;align-items:flex-end;justify-content:center;padding:16px;z-index:20}
+.sheet{background:var(--surface);border-radius:18px;padding:20px;width:min(520px,100%);display:flex;flex-direction:column;gap:12px;margin-bottom:env(safe-area-inset-bottom)}
+.sheet h2{font:800 1.3rem var(--f-display);margin:0}
+.logo{width:64px;height:64px;border-radius:16px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <section id="loading" class="card muted" style="text-align:center">Cargando…</section>
+
+  <section id="login" hidden>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;margin:20px 0 6px">
+      <img class="logo" src="icon-192.png" alt="">
+      <h1>Lavado de manos</h1>
+      <p class="muted" style="margin:0">Ingresá con el código y el PIN que te dio tu encargado.</p>
+    </div>
+    <form class="card" id="loginf" style="display:flex;flex-direction:column;gap:14px" novalidate>
+      <div class="field"><label class="lbl" for="code">Código (5 números)</label><input id="code" inputmode="numeric" autocomplete="username" maxlength="5" pattern="[0-9]*"></div>
+      <div class="field"><label class="lbl" for="pin">PIN (6 números)</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="6" pattern="[0-9]*"></div>
+      <p class="err" id="lerr" role="alert"></p>
+      <button class="btn big go" type="submit" id="lbtn">Ingresar</button>
+    </form>
+  </section>
+
+  <section id="app" hidden style="display:flex;flex-direction:column;gap:16px">
+    <div class="head">
+      <div><div class="lbl" id="grp"></div><div class="nm" id="nm"></div></div>
+      <img class="logo" src="icon-192.png" alt="" style="width:40px;height:40px;border-radius:10px">
+    </div>
+
+    <div class="ringbox state-off" id="ringbox">
+      <div class="ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="currentColor" stroke-opacity=".15" stroke-width="10"/>
+          <circle id="arc" cx="60" cy="60" r="52" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+        </svg>
+        <div class="center"><div class="t" id="tm">—</div><div class="s" id="ts">Fuera de turno</div></div>
+      </div>
+      <div class="msg" id="msg">Tocá "Iniciar turno" cuando llegues y te hayas lavado las manos.</div>
+    </div>
+
+    <button class="btn big go" id="mainbtn">▶️ Iniciar turno</button>
+    <button class="btn ghost" id="outbtn" hidden>Terminar mi turno</button>
+
+    <div class="card" id="notif"></div>
+
+    <div class="card">
+      <div class="lbl" style="margin-bottom:6px">Hoy</div>
+      <div id="today"><p class="muted" style="margin:0">Todavía no registraste nada hoy.</p></div>
+    </div>
+
+    <div style="text-align:center"><button class="btn link" id="logout">Cerrar sesión</button></div>
+  </section>
+</div>
+
+<div id="overlay" class="overlay" hidden></div>
+<div id="modal" class="modal" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js"></script>
+<script src="../config.js"></script>
+<script>
+const L = window.LAVADO;
+const sb = supabase.createClient(L.url, L.anon, { auth: { persistSession: true, autoRefreshToken: true, storageKey: 'lavado-personal' } });
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hm = t => new Date(t).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const GN = { cocina: 'Cocina', general: 'Personal del servicio' };
+let me = null, cfg = { cocina: 90, general: 120, aviso: 15 }, today = [], lastState = null, chan = null, busy = false;
+
+function show(id){ ['loading','login','app'].forEach(x => $('#'+x).hidden = x !== id); }
+function dur(min){ min = Math.max(0, Math.round(min)); const h = Math.floor(min/60), m = min%60; return h ? h+' h '+String(m).padStart(2,'0') : m+' min'; }
+function clock(ms){ const neg = ms < 0; ms = Math.abs(ms); const t = Math.floor(ms/1000), h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60;
+  return (neg?'+':'') + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0'); }
+const ivMin = () => me && me.grp === 'cocina' ? cfg.cocina : cfg.general;
+function status(now = Date.now()){
+  if (!me || !me.on_shift || !me.last_wash) return { st: 'off' };
+  const iv = ivMin()*60000, el = now - Date.parse(me.last_wash), left = iv - el;
+  return { st: left <= 0 ? 'bad' : left <= cfg.aviso*60000 ? 'warn' : 'ok', left, iv, el };
+}
+
+/* ---------- Ingreso ---------- */
+$('#loginf').addEventListener('submit', async e => {
+  e.preventDefault();
+  const code = $('#code').value.trim(), pin = $('#pin').value.trim(), err = $('#lerr');
+  if (!/^[0-9]{5}$/.test(code)) { err.textContent = 'El código tiene 5 números.'; return; }
+  if (!/^[0-9]{6}$/.test(pin)) { err.textContent = 'El PIN tiene 6 números.'; return; }
+  err.textContent = ''; $('#lbtn').disabled = true; $('#lbtn').textContent = 'Ingresando…';
+  const { error } = await sb.auth.signInWithPassword({ email: `p${code}@${L.emailDomain}`, password: pin });
+  $('#lbtn').disabled = false; $('#lbtn').textContent = 'Ingresar';
+  if (error) { err.textContent = /invalid/i.test(error.message) ? 'Código o PIN incorrectos. Si no los recordás, pedíselos a tu encargado.' : 'No hay conexión. Probá de nuevo.'; return; }
+  $('#pin').value = '';
+  await loadMe();
+});
+['#code','#pin'].forEach(s => $(s).addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g,''); $('#lerr').textContent=''; }));
+
+/* ---------- Datos ---------- */
+async function loadMe(){
+  const { data, error } = await sb.from('staff').select('*').maybeSingle();
+  if (error || !data) {
+    if (!error) { await sb.auth.signOut(); show('login'); $('#lerr').textContent = 'Tu usuario no está habilitado. Hablá con tu encargado.'; }
+    else if (!me) { show('login'); }
+    return;
+  }
+  me = data;
+  const c = await sb.from('config').select('*').single();
+  if (c.data) cfg = c.data;
+  await loadToday();
+  show('app'); render(); renderNotif(); resaveSub(); subscribe();
+}
+async function loadToday(){
+  const d = new Date(); d.setHours(0,0,0,0);
+  const { data } = await sb.from('washes').select('*').gte('t', d.toISOString()).order('t', { ascending: false });
+  today = data || [];
+}
+function subscribe(){
+  if (chan || !me) return;
+  chan = sb.channel('me-'+me.id)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'staff', filter: 'id=eq.'+me.id }, p => { me = p.new; render(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'config' }, p => { if (p.new && p.new.id === 1) { cfg = p.new; render(); } })
+    .subscribe();
+}
+
+/* ---------- Pantalla ---------- */
+function render(){
+  if (!me) return;
+  $('#nm').textContent = me.name;
+  $('#grp').textContent = GN[me.grp] + ' · lavado cada ' + dur(ivMin());
+  const s = status(), box = $('#ringbox'), arc = $('#arc'), C = 326.7;
+  box.className = 'ringbox state-' + s.st;
+  if (s.st === 'off') {
+    $('#tm').textContent = '—'; $('#ts').textContent = 'Fuera de turno';
+    $('#msg').textContent = 'Lavate las manos y tocá "Iniciar turno" cuando llegues.';
+    arc.setAttribute('stroke-dashoffset', C);
+    $('#mainbtn').textContent = '▶️ Iniciar turno'; $('#outbtn').hidden = true;
+  } else {
+    const frac = Math.min(1, s.el / s.iv);
+    arc.setAttribute('stroke-dashoffset', (C * (1 - frac)).toFixed(1));
+    $('#tm').textContent = clock(s.left);
+    $('#ts').textContent = s.st === 'bad' ? 'Vencido' : s.st === 'warn' ? 'Por vencer' : 'Para tu próximo lavado';
+    $('#msg').textContent = s.st === 'bad' ? '¡Lavate las manos ahora y marcá!' : s.st === 'warn' ? 'Te quedan menos de ' + cfg.aviso + ' min. Andá a lavarte.' : 'Último lavado ' + hm(me.last_wash) + ' · próximo a las ' + hm(Date.parse(me.last_wash) + s.iv);
+    $('#mainbtn').textContent = '🧼 Me lavé las manos'; $('#outbtn').hidden = false;
+  }
+  if (lastState && lastState !== s.st && (s.st === 'warn' || s.st === 'bad')) alarm(s.st);
+  lastState = s.st;
+  $('#today').innerHTML = today.length ? today.map(w => `<div class="row"><span class="num">${hm(w.t)}</span><span>${
+    w.kind === 'ingreso' ? '<span class="pill state-off">Ingreso</span>' :
+    w.kind === 'salida' || w.kind === 'salida_auto' ? '<span class="pill state-off">Salida</span>' :
+    w.late_min > 0 ? `<span class="pill state-bad">Tarde ${dur(w.late_min)}</span>` : '<span class="pill state-ok">A tiempo</span>'}</span></div>`).join('')
+    : '<p class="muted" style="margin:0">Todavía no registraste nada hoy.</p>';
+}
+setInterval(render, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && me) loadMe(); });
+setInterval(() => { if (me && !document.hidden) loadMe(); }, 60000);
+
+/* ---------- Marcar ---------- */
+function overlay(kind, title, sub){ const o = $('#overlay'); o.className = 'overlay state-' + kind; o.innerHTML = `<span>${esc(title)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}`; o.hidden = false; clearTimeout(overlay.h); overlay.h = setTimeout(() => o.hidden = true, 2600); o.onclick = () => o.hidden = true; }
+async function mark(kind){
+  if (busy) return; busy = true; unlockAudio();
+  const { data, error } = await sb.rpc('mark', { p_kind: kind });
+  busy = false;
+  if (error) { overlay('bad', 'No se pudo registrar', navigator.onLine ? 'Probá de nuevo en un momento.' : 'Sin conexión a internet.'); return; }
+  if (data.duplicate) overlay('ok', 'Ya estaba registrado', 'Marcaste hace menos de 2 minutos.');
+  else if (data.kind === 'ingreso') overlay('ok', '¡Turno iniciado!', 'Próximo lavado a las ' + hm(data.next));
+  else if (data.kind === 'salida') overlay('off', 'Turno terminado', '¡Hasta la próxima!');
+  else if (data.late_min > 0) overlay('warn', 'Lavado registrado', 'Con ' + dur(data.late_min) + ' de retraso · próximo a las ' + hm(data.next));
+  else overlay('ok', '✔ ¡Bien!', 'Próximo lavado a las ' + hm(data.next));
+  if (navigator.vibrate) navigator.vibrate(80);
+  await loadMe();
+}
+$('#mainbtn').onclick = () => {
+  const s = status();
+  confirmSheet(s.st === 'off' ? 'Iniciar turno' : 'Confirmar lavado',
+    s.st === 'off' ? '¿Ya te lavaste las manos? Al confirmar empieza a correr tu tiempo.' : 'Marcá solo después de lavarte las manos.',
+    s.st === 'off' ? 'Sí, iniciar turno' : 'Sí, me lavé las manos', () => mark('lavado'));
+};
+$('#outbtn').onclick = () => confirmSheet('Terminar turno', 'Dejás de recibir avisos hasta tu próximo ingreso.', 'Terminar turno', () => mark('salida'));
+function confirmSheet(title, text, ok, fn){
+  const m = $('#modal');
+  m.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><h2>${esc(title)}</h2><p class="muted" style="margin:0">${esc(text)}</p><button class="btn big go" id="sok">${esc(ok)}</button><button class="btn ghost" id="sno">Cancelar</button></div>`;
+  m.hidden = false; $('#sok').focus();
+  $('#sok').onclick = () => { m.hidden = true; fn(); };
+  $('#sno').onclick = () => m.hidden = true;
+  m.onclick = e => { if (e.target === m) m.hidden = true; };
+}
+
+/* ---------- Sonido con la app abierta ---------- */
+let actx;
+function unlockAudio(){ try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch(e){} }
+document.addEventListener('click', unlockAudio, { once: true });
+function tone(f, st, len, type){ const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.value = f; o.connect(g); g.connect(actx.destination);
+  const t = actx.currentTime + st; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.4, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + len); o.start(t); o.stop(t + len + .05); }
+function alarm(st){
+  if (navigator.vibrate) navigator.vibrate(st === 'bad' ? [400,150,400,150,800] : [300,150,300]);
+  try { if (!actx) return; if (st === 'bad') [0,.32,.64].forEach(s => tone(988, s, .24, 'square')); else { tone(660, 0, .3, 'sine'); tone(880, .38, .4, 'sine'); } } catch(e){}
+}
+
+/* ---------- Notificaciones push ---------- */
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+function b64(base64){ const p = '='.repeat((4 - base64.length % 4) % 4); const r = atob((base64 + p).replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); }
+let swReg = null;
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').then(r => { swReg = r; renderNotif(); }).catch(() => {});
+async function pushState(){
+  if (isIOS() && !standalone()) return 'ios-install';
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+  const reg = swReg || await Promise.race([navigator.serviceWorker.ready, new Promise(r => setTimeout(() => r(null), 4000))]);
+  if (!reg) return 'unsupported';
+  const sub = await reg.pushManager.getSubscription();
+  return sub && Notification.permission === 'granted' ? 'on' : 'off';
+}
+async function renderNotif(){
+  const n = $('#notif'); if (!n || !me) return;
+  const st = await pushState();
+  if (st === 'on') n.innerHTML = `<div class="lbl">Avisos</div><p style="margin:6px 0 12px"><b>🔔 Activados en este celular.</b> Te va a sonar a los ${cfg.aviso} min de tu lavado y al vencer, aunque tengas la pantalla apagada.</p><button class="btn ghost" id="ntest">Probar aviso</button>`;
+  else if (st === 'off') n.innerHTML = `<div class="lbl">Avisos</div><p style="margin:6px 0 12px"><b>⚠️ Todavía no activaste los avisos.</b> Sin esto el celular no te avisa cuando te toca lavarte.</p><button class="btn go" id="non">🔔 Activar avisos</button>`;
+  else if (st === 'ios-install') n.innerHTML = `<div class="lbl">Avisos en iPhone</div><p style="margin:6px 0 0"><b>Para recibir avisos, agregá la app a tu pantalla de inicio:</b></p><ol class="steps"><li>Tocá el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba) abajo en Safari.</li><li>Elegí <b>"Agregar a inicio"</b> y tocá <b>Agregar</b>.</li><li>Abrí la app desde el ícono nuevo e ingresá de nuevo.</li></ol><p class="muted" style="margin:8px 0 0;font-size:.9rem">Necesitás iOS 16.4 o más nuevo.</p>`;
+  else if (st === 'denied') n.innerHTML = `<div class="lbl">Avisos</div><p style="margin:6px 0 0"><b>🔕 Los avisos están bloqueados.</b> Activalos en los ajustes del celular: Notificaciones → esta app (o el navegador) → Permitir.</p>`;
+  else n.innerHTML = `<div class="lbl">Avisos</div><p style="margin:6px 0 0"><b>Este navegador no permite avisos.</b> Abrí este link con Chrome (Android) o Safari (iPhone).</p>`;
+  const on = $('#non'); if (on) on.onclick = enablePush;
+  const t = $('#ntest'); if (t) t.onclick = async () => { const reg = swReg || await navigator.serviceWorker.ready; reg.showNotification('🔔 Prueba de aviso', { body: 'Así te va a llegar el aviso de lavado de manos.', icon: 'icon-192.png', badge: 'icon-192.png', vibrate: [300,150,300], tag: 'prueba' }); };
+}
+async function enablePush(){
+  unlockAudio();
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { renderNotif(); return; }
+    const reg = swReg || await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(L.vapid) });
+    const j = sub.toJSON();
+    const { error } = await sb.rpc('save_sub', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+    if (error) throw error;
+    overlay('ok', '🔔 Avisos activados', 'Ya te van a llegar los avisos a este celular.');
+  } catch (e) { overlay('bad', 'No se pudieron activar', 'Probá de nuevo. Si sigue fallando, avisale a tu encargado.'); }
+  renderNotif();
+}
+async function resaveSub(){
+  try { if (!('serviceWorker' in navigator) || Notification.permission !== 'granted') return;
+    const reg = swReg || await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (!sub) return;
+    const j = sub.toJSON(); await sb.rpc('save_sub', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+  } catch(e){}
+}
+
+/* ---------- Salir ---------- */
+$('#logout').onclick = () => confirmSheet('Cerrar sesión', 'Si cerrás sesión, este celular deja de recibir tus avisos.', 'Cerrar sesión', async () => {
+  try { const reg = swReg || await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription();
+    if (sub) { await sb.rpc('delete_sub', { p_endpoint: sub.endpoint }); await sub.unsubscribe(); } } catch(e){}
+  if (chan) { sb.removeChannel(chan); chan = null; }
+  await sb.auth.signOut(); me = null; lastState = null; show('login');
+});
+
+/* ---------- Inicio ---------- */
+(async () => { const { data: { session } } = await sb.auth.getSession(); if (session) await loadMe(); else show('login'); })();
+</script>
+</body>
+</html>
