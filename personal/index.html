@@ -122,6 +122,12 @@ input{font:1.4rem var(--f-num);letter-spacing:.25em;padding:14px;border:1px soli
     <button class="btn big go" id="mainbtn">▶️ Iniciar turno</button>
     <button class="btn ghost" id="outbtn" hidden>Terminar mi turno</button>
 
+    <div class="card" id="teamcard">
+      <div class="lbl" style="margin-bottom:4px">👥 Compañeros en turno</div>
+      <p class="muted" style="margin:0 0 6px;font-size:.88rem">Si ves a alguien en amarillo o rojo, avisale que se lave las manos.</p>
+      <div id="team"><p class="muted" style="margin:0">Cargando…</p></div>
+    </div>
+
     <div class="card" id="notif"></div>
 
     <div class="card">
@@ -170,7 +176,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const hm = t => new Date(t).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const GN = { cocina: 'Cocina', general: 'Personal del servicio' };
-let me = null, cfg = { cocina: 90, general: 120, aviso: 15 }, today = [], lastState = null, chan = null, busy = false;
+let team = [], me = null, cfg = { cocina: 90, general: 120, aviso: 15 }, today = [], lastState = null, chan = null, busy = false;
 
 function show(id){ ['loading','login','app'].forEach(x => $('#'+x).hidden = x !== id); }
 function dur(min){ min = Math.max(0, Math.round(min)); const h = Math.floor(min/60), m = min%60; return h ? h+' h '+String(m).padStart(2,'0') : m+' min'; }
@@ -209,8 +215,19 @@ async function loadMe(){
   me = data;
   const c = await sb.from('config').select('*').single();
   if (c.data) cfg = c.data;
-  await loadToday();
+  await Promise.all([loadToday(), loadTeam()]);
   show('app'); render(); renderNotif(); resaveSub(); subscribe();
+}
+async function loadTeam(){ const { data, error } = await sb.rpc('team_status'); if (!error) team = data || []; }
+function renderTeam(){
+  const el = $('#team'); if (!el) return;
+  const now = Date.now(), rk = { bad: 0, warn: 1, ok: 2 };
+  const rows = team.map(t => { const left = t.iv * 60000 - (now - Date.parse(t.last_wash)); return { t, left, st: left <= 0 ? 'bad' : left <= cfg.aviso * 60000 ? 'warn' : 'ok' }; })
+    .sort((a, b) => rk[a.st] - rk[b.st] || a.left - b.left);
+  if (!rows.length) { el.innerHTML = '<p class="muted" style="margin:0">No hay nadie en turno en este momento.</p>'; return; }
+  const short = n => { const [ap, no] = String(n).split(','); return ((no || '').trim().split(' ')[0] + ' ' + ap.trim()).trim(); };
+  el.innerHTML = rows.map(r => `<div class="row" style="align-items:center"><span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:11px;height:11px;border-radius:50%;flex:none;background:var(--${r.st})"></span><span style="overflow-wrap:anywhere"><span style="text-transform:capitalize">${esc(short(r.t.name).toLowerCase())}</span>${r.t.is_me ? ' <span class="muted">(vos)</span>' : ''}</span></span>
+    <span class="pill state-${r.st} num">${r.st === 'bad' ? 'vencido ' + dur(-r.left / 60000) : 'faltan ' + dur(r.left / 60000)}</span></div>`).join('');
 }
 async function loadToday(){
   const d = new Date(); d.setHours(0,0,0,0);
@@ -247,6 +264,7 @@ function render(){
   }
   if (lastState && lastState !== s.st && (s.st === 'warn' || s.st === 'bad')) alarm(s.st);
   lastState = s.st;
+  renderTeam();
   $('#today').innerHTML = today.length ? today.map(w => `<div class="row"><span class="num">${hm(w.t)}</span><span>${
     w.kind === 'ingreso' ? '<span class="pill state-off">Ingreso</span>' :
     w.kind === 'salida' || w.kind === 'salida_auto' ? '<span class="pill state-off">Salida</span>' :
@@ -254,6 +272,7 @@ function render(){
     : '<p class="muted" style="margin:0">Todavía no registraste nada hoy.</p>';
 }
 setInterval(render, 1000);
+setInterval(() => { if (me && !document.hidden) loadTeam(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && me) loadMe(); });
 setInterval(() => { if (me && !document.hidden) loadMe(); }, 60000);
 
