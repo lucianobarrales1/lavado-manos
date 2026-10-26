@@ -117,11 +117,13 @@ input[type=number]{width:96px}
 <div id="toast" class="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="../config.js"></script>
 <script>
 const L = window.LAVADO;
 const sb = supabase.createClient(L.url, L.anon, { auth: { persistSession: true, autoRefreshToken: true, storageKey: 'lavado-panel' } });
-const S = { staff: [], washes: [], cfg: { cocina: 90, general: 120, aviso: 15, max_turno_h: 10 }, subs: {}, sups: [], view: 'ahora', day: dayKey(new Date()), q: '', chan: null, sound: false, prevWarn: new Set(), prevBad: new Set(), lastRed: 0 };
+const S = { sinks: [], staff: [], washes: [], cfg: { cocina: 90, general: 120, aviso: 15, max_turno_h: 10 }, subs: {}, sups: [], view: 'ahora', day: dayKey(new Date()), q: '', chan: null, sound: false, prevWarn: new Set(), prevBad: new Set(), lastRed: 0 };
 const GN = { cocina: 'Cocina', general: 'Resto del personal' };
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -156,12 +158,13 @@ async function start(){
   const { data: ok } = await sb.rpc('is_supervisor');
   if (!ok) { await sb.auth.signOut(); show('login'); $('#lerr').textContent = 'Esta cuenta no es de encargado.'; return; }
   show('app'); setView((location.hash || '').slice(1) || 'ahora');
-  await Promise.all([loadStaff(), loadCfg(), loadWashes(), loadSubs()]);
+  await Promise.all([loadStaff(), loadCfg(), loadWashes(), loadSubs(), loadSinks()]);
   render(); live();
 }
 
 /* ---------- Datos ---------- */
 async function loadStaff(){ const { data, error } = await sb.from('staff').select('*').order('name'); if (error) return banner('No se pudo leer el personal. Revisá la conexión.'); S.staff = data; banner(''); checkAlarms(); }
+async function loadSinks(){ const { data } = await sb.from('sinks').select('*').order('created_at'); S.sinks = data || []; }
 async function loadCfg(){ const { data } = await sb.from('config').select('*').single(); if (data) S.cfg = data; }
 async function loadSubs(){ const { data } = await sb.rpc('sub_counts'); S.subs = {}; (data || []).forEach(r => S.subs[r.staff_id] = r.n); }
 async function loadWashes(){
@@ -232,7 +235,7 @@ function vRegistro(){
   h += `<h2>Resumen por persona</h2><div class="list tbl"><table><thead><tr><th>Persona</th><th>Lavados</th><th>Tarde</th><th>Mayor retraso</th></tr></thead><tbody>
     ${pr.map(r => `<tr><td>${esc(r.name)}</td><td>${r.n}</td><td style="color:${r.late ? 'var(--bad)' : 'inherit'}">${r.late}</td><td>${r.maxLate ? dur(r.maxLate) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
   h += `<h2>Detalle</h2><div class="list tbl"><table><thead><tr><th>Hora</th><th>Persona</th><th>Estado</th></tr></thead><tbody>
-    ${ws.map(w => `<tr><td class="num">${hm(w.t)}</td><td>${esc(w.name)}${w.by_supervisor ? ' <span class="muted">(encargado)</span>' : ''}</td><td>${kindPill(w)}</td></tr>`).join('')}</tbody></table></div>`;
+    ${ws.map(w => `<tr><td class="num">${hm(w.t)}</td><td>${esc(w.name)}${w.by_supervisor ? ' <span class="muted">(encargado)</span>' : ''}${w.sink_id && sinkName(w.sink_id) ? ' <span class="muted">· ' + esc(sinkName(w.sink_id)) + '</span>' : ''}</td><td>${kindPill(w)}</td></tr>`).join('')}</tbody></table></div>`;
   return h;
 }
 function kindPill(w){ return w.kind === 'ingreso' ? '<span class="pill off">Ingreso</span>' : w.kind === 'salida' ? '<span class="pill off">Salida</span>' : w.kind === 'salida_auto' ? '<span class="pill off">Salida automática</span>' : w.late_min > 0 ? `<span class="pill bad">Tarde ${dur(w.late_min)}</span>` : '<span class="pill ok">A tiempo</span>'; }
@@ -263,8 +266,15 @@ function vAjustes(){
     <div class="field"><label class="lbl" for="c2">Resto (min)</label><input type="number" id="c2" min="15" max="480" value="${S.cfg.general}"></div>
     <div class="field"><label class="lbl" for="c3">Aviso amarillo (min antes)</label><input type="number" id="c3" min="1" max="60" value="${S.cfg.aviso}"></div>
     <div class="field"><label class="lbl" for="c4">Cierre automático (h)</label><input type="number" id="c4" min="4" max="24" value="${S.cfg.max_turno_h}"></div>
+    <div class="field"><label class="lbl" for="c5">Temporizador de lavado (seg)</label><input type="number" id="c5" min="0" max="120" value="${S.cfg.wash_seconds ?? 30}"></div>
+    <label style="display:flex;gap:8px;align-items:center;padding-bottom:10px"><input type="checkbox" id="c6"${S.cfg.require_qr !== false ? ' checked' : ''}> Pedir QR de la bacha</label>
     <button class="btn" type="submit">Guardar</button></form>
     <p class="muted">Cocina: cada ${dur(S.cfg.cocina)}, amarillo a ${dur(S.cfg.cocina - S.cfg.aviso)}. Resto: cada ${dur(S.cfg.general)}, amarillo a ${dur(S.cfg.general - S.cfg.aviso)}. Si alguien se olvida de terminar el turno, se cierra solo a las ${S.cfg.max_turno_h} h.</p>`;
+  h += `<h2>Bachas (QR)</h2><p class="muted" style="margin-top:-4px">Imprimí el QR de cada bacha y pegalo al lado. Para marcar un lavado, el personal tiene que escanearlo con la app y esperar el temporizador.</p>`;
+  h += S.sinks.filter(k => k.active).length ? `<div class="list">${S.sinks.filter(k => k.active).map(k => `<div class="row"><div class="grow"><div class="nm">${esc(k.name)}</div></div>
+      <div class="acts"><button class="btn sm" data-qr="${k.id}">Descargar QR (PDF)</button><button class="btn ghost sm" data-rename="${k.id}">Renombrar</button><button class="btn ghost sm" data-newtok="${k.id}">Cambiar QR</button><button class="btn danger sm" data-rmsink="${k.id}">Quitar</button></div></div>`).join('')}</div>`
+    : `<div class="empty">No hay bachas cargadas. Agregá una para poder imprimir su QR.</div>`;
+  h += `<form class="form" id="sinkf" style="margin-top:10px"><div class="field" style="flex:1;min-width:200px"><label class="lbl" for="skn">Nueva bacha</label><input id="skn" maxlength="40" placeholder="Ej.: Bacha cocina caliente"></div><button class="btn" type="submit">Agregar bacha</button></form>`;
   h += `<h2>Encargados y nutricionistas</h2>`;
   h += S.sups.length ? `<div class="list">${S.sups.map(s => `<div class="row"><div class="grow"><div class="nm">${esc(s.name || s.email)}${s.me ? ' <span class="muted">(vos)</span>' : ''}</div><div class="muted" style="font-size:.85rem">${esc(s.email)}</div></div>${s.me ? '' : `<button class="btn danger sm" data-rmsup="${s.user_id}">Quitar</button>`}</div>`).join('')}</div>` : `<p class="muted">Cargando…</p>`;
   h += `<h3 style="font:600 1rem var(--f-display);margin:16px 0 8px">Agregar encargado</h3><form class="form" id="supf">
@@ -318,15 +328,44 @@ function bind(){
   const csv = $('#csv'); if (csv) csv.onclick = () => { const rows = [['Fecha','Hora','Persona','Sector','Tipo','Minutos tarde','Registró encargado']].concat(S.washes.slice().reverse().map(w => [S.day, hm(w.t), w.name, GN[w.grp], w.kind, w.late_min, w.by_supervisor ? 'sí' : 'no']));
     const blob = new Blob(['﻿' + rows.map(r => r.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(';')).join('\n')], { type: 'text/csv' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'lavado-de-manos-' + S.day + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
-  const cf = $('#cfgf'); if (cf) cf.onsubmit = async e => { e.preventDefault(); const a = +$('#c1').value, b = +$('#c2').value, c = +$('#c3').value, d = +$('#c4').value;
-    if (!(a >= 15 && b >= 15 && c >= 1 && c < Math.min(a, b) && d >= 4 && d <= 24)) { toast('Revisá los valores: el aviso tiene que ser menor que los intervalos.'); return; }
-    const { error } = await sb.from('config').update({ cocina: a, general: b, aviso: c, max_turno_h: d }).eq('id', 1);
+  const cf = $('#cfgf'); if (cf) cf.onsubmit = async e => { e.preventDefault(); const a = +$('#c1').value, b = +$('#c2').value, c = +$('#c3').value, d = +$('#c4').value, ws = +$('#c5').value, rq = $('#c6').checked;
+    if (!(a >= 15 && b >= 15 && c >= 1 && c < Math.min(a, b) && d >= 4 && d <= 24 && ws >= 0 && ws <= 120)) { toast('Revisá los valores: el aviso tiene que ser menor que los intervalos y el temporizador entre 0 y 120 seg.'); return; }
+    const { error } = await sb.from('config').update({ cocina: a, general: b, aviso: c, max_turno_h: d, wash_seconds: ws, require_qr: rq }).eq('id', 1);
     toast(error ? 'No se pudo guardar.' : 'Intervalos guardados'); document.activeElement.blur(); await loadCfg(); render(); };
+  const skf = $('#sinkf'); if (skf) skf.onsubmit = async e => { e.preventDefault(); const n = $('#skn').value.trim(); if (!n) { toast('Escribí un nombre para la bacha.'); return; }
+    const { error } = await sb.from('sinks').insert({ name: n }); toast(error ? 'No se pudo agregar la bacha.' : 'Bacha agregada'); document.activeElement.blur(); await loadSinks(); render(); };
+  document.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => sinkPdf(S.sinks.find(k => k.id === b.dataset.qr)));
+  document.querySelectorAll('[data-rename]').forEach(b => b.onclick = () => { const k = S.sinks.find(x => x.id === b.dataset.rename);
+    openModal(`<h3>Renombrar bacha</h3><div class="field"><label class="lbl" for="rnm">Nombre</label><input id="rnm" maxlength="40" value="${esc(k.name)}"></div><div class="acts"><button class="btn" id="go">Guardar</button><button class="btn ghost" data-close>Cancelar</button></div>`);
+    $('#go').onclick = async () => { const n = $('#rnm').value.trim(); if (!n) return; const { error } = await sb.from('sinks').update({ name: n }).eq('id', k.id); toast(error ? 'No se pudo renombrar.' : 'Bacha renombrada'); await loadSinks(); closeModal(); }; });
+  document.querySelectorAll('[data-newtok]').forEach(b => b.onclick = () => { const k = S.sinks.find(x => x.id === b.dataset.newtok);
+    openModal(`<h3>Cambiar el QR de ${esc(k.name)}</h3><p class="muted" style="margin:0">El QR impreso actual deja de funcionar. Usalo si alguien sacó foto del QR. Después descargá e imprimí el nuevo.</p><div class="acts"><button class="btn" id="go">Cambiar QR</button><button class="btn ghost" data-close>Cancelar</button></div>`);
+    $('#go').onclick = async () => { const tok = Array.from(crypto.getRandomValues(new Uint8Array(10)), x => x.toString(16).padStart(2, '0')).join('');
+      const { error } = await sb.from('sinks').update({ token: tok }).eq('id', k.id); toast(error ? 'No se pudo cambiar.' : 'QR cambiado: descargá e imprimí el nuevo'); await loadSinks(); closeModal(); }; });
+  document.querySelectorAll('[data-rmsink]').forEach(b => b.onclick = () => { const k = S.sinks.find(x => x.id === b.dataset.rmsink);
+    openModal(`<h3>Quitar ${esc(k.name)}</h3><p class="muted" style="margin:0">Su QR deja de funcionar. El historial se conserva.</p><div class="acts"><button class="btn danger" id="go">Quitar</button><button class="btn ghost" data-close>Cancelar</button></div>`);
+    $('#go').onclick = async () => { const { error } = await sb.from('sinks').update({ active: false }).eq('id', k.id); toast(error ? 'No se pudo quitar.' : 'Bacha quitada'); await loadSinks(); closeModal(); }; });
   const sf = $('#supf'); if (sf) sf.onsubmit = async e => { e.preventDefault(); try { await admin({ action: 'add_supervisor', name: $('#sn').value.trim(), email: $('#se').value.trim(), password: $('#sp').value }); toast('Encargado agregado'); document.activeElement.blur(); loadSups(); } catch(er) { toast(er.message); } };
   document.querySelectorAll('[data-rmsup]').forEach(b => b.onclick = () => { openModal(`<h3>Quitar encargado</h3><p class="muted" style="margin:0">Pierde el acceso al panel.</p><div class="acts"><button class="btn danger" id="go">Quitar</button><button class="btn ghost" data-close>Cancelar</button></div>`);
     $('#go').onclick = async () => { try { await admin({ action: 'remove_supervisor', user_id: b.dataset.rmsup }); toast('Encargado quitado'); closeModal(); loadSups(); } catch(e) { toast(e.message); } }; });
   const lo = $('#logout'); if (lo) lo.onclick = async () => { if (S.chan) { sb.removeChannel(S.chan); S.chan = null; } await sb.auth.signOut(); show('login'); };
   const snd = $('#snd'); if (snd) snd.onclick = () => { S.sound = !S.sound; if (S.sound) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); beep('warn'); } render(); };
+}
+const sinkName = id => (S.sinks.find(k => k.id === id) || {}).name || '';
+function sinkPdf(k){
+  try {
+    const q = qrcode(0, 'M'); q.addData('LAVADO-BACHA:' + k.token); q.make();
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' }), n = q.getModuleCount(), sz = 120, c = sz / n, x0 = (210 - sz) / 2, y0 = 70;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(30); doc.setTextColor(19, 34, 45); doc.text('LAVADO DE MANOS', 105, 32, { align: 'center' });
+    doc.setFontSize(16); doc.setTextColor(31, 78, 121); doc.text(k.name, 105, 44, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(13); doc.setTextColor(90, 107, 118);
+    doc.text('Abrí la app, tocá "Me lavé las manos" y escaneá este código.', 105, 58, { align: 'center' });
+    doc.setFillColor(0, 0, 0); for (let r = 0; r < n; r++) for (let cc = 0; cc < n; cc++) if (q.isDark(r, cc)) doc.rect(x0 + cc * c, y0 + r * c, c + .02, c + .02, 'F');
+    doc.setFontSize(14); doc.setTextColor(19, 34, 45);
+    ['1. Mojate las manos y poné jabón', '2. Frotá palmas, dorso, entre los dedos, pulgares y uñas', '3. Enjuagá y secate con papel descartable'].forEach((t, i) => doc.text(t, 105, y0 + sz + 18 + i * 9, { align: 'center' }));
+    doc.setFontSize(10); doc.setTextColor(140, 150, 158); doc.text('Si este QR se daña o alguien lo fotografía, el encargado puede cambiarlo desde el panel.', 105, 282, { align: 'center' });
+    doc.save('QR-' + k.name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') + '.pdf');
+  } catch (e) { toast('No se pudo generar el PDF. Recargá la página y probá de nuevo.'); }
 }
 async function loadSups(){ try { const r = await admin({ action: 'list_supervisors' }); S.sups = r.supervisors; if (S.view === 'ajustes') soft(); } catch(e) { toast(e.message); } }
 

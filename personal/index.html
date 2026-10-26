@@ -71,6 +71,15 @@ input{font:1.4rem var(--f-num);letter-spacing:.25em;padding:14px;border:1px soli
 .sheet{background:var(--surface);border-radius:18px;padding:20px;width:min(520px,100%);display:flex;flex-direction:column;gap:12px;margin-bottom:env(safe-area-inset-bottom)}
 .sheet h2{font:800 1.3rem var(--f-display);margin:0}
 .logo{width:64px;height:64px;border-radius:16px}
+.wash{position:fixed;inset:0;z-index:25;background:var(--bg);display:flex;flex-direction:column;gap:14px;padding:max(14px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));overflow:auto}
+.wash .top{display:flex;justify-content:space-between;align-items:center;gap:10px;max-width:520px;width:100%;margin:0 auto}
+.wash .top h2{font:800 1.3rem var(--f-display);margin:0}
+.wash .body{max-width:520px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center}
+.cam{position:relative;width:100%;aspect-ratio:1;max-height:62vh;border-radius:18px;overflow:hidden;background:#000}
+.cam video{width:100%;height:100%;object-fit:cover}
+.cam .frame{position:absolute;inset:18%;border:4px solid rgba(255,255,255,.9);border-radius:18px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
+.xbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:8px 14px;font:700 .95rem var(--f-body);cursor:pointer}
+.step{font:800 1.5rem/1.2 var(--f-display);min-height:2.4em;display:flex;align-items:center;justify-content:center}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -124,10 +133,35 @@ input{font:1.4rem var(--f-num);letter-spacing:.25em;padding:14px;border:1px soli
   </section>
 </div>
 
+<div id="wash" class="wash" hidden>
+  <div class="top"><h2 id="wtitle">Lavado de manos</h2><button class="xbtn" id="wclose">Cancelar</button></div>
+  <div class="body" id="wscan">
+    <p style="margin:0;font-weight:700">Apuntá la cámara al QR pegado en la bacha</p>
+    <div class="cam"><video id="wvid" playsinline muted autoplay></video><div class="frame"></div></div>
+    <canvas id="wcan" hidden></canvas>
+    <p class="err" id="werr" role="alert"></p>
+  </div>
+  <div class="body" id="wtimer" hidden>
+    <div class="ringbox state-ok" id="wbox" style="width:100%">
+      <div class="ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="currentColor" stroke-opacity=".15" stroke-width="10"/>
+          <circle id="warc" cx="60" cy="60" r="52" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="0"/>
+        </svg>
+        <div class="center"><div class="t" id="wsec">30</div><div class="s">segundos</div></div>
+      </div>
+      <div class="step" id="wstep">Mojate las manos</div>
+    </div>
+    <p class="muted" id="wsink" style="margin:0"></p>
+    <button class="btn big go" id="wok" disabled>Lavate las manos…</button>
+    <p class="err" id="werr2" role="alert"></p>
+  </div>
+</div>
 <div id="overlay" class="overlay" hidden></div>
 <div id="modal" class="modal" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="../config.js"></script>
 <script>
 const L = window.LAVADO;
@@ -229,7 +263,7 @@ async function mark(kind){
   if (busy) return; busy = true; unlockAudio();
   const { data, error } = await sb.rpc('mark', { p_kind: kind });
   busy = false;
-  if (error) { overlay('bad', 'No se pudo registrar', navigator.onLine ? 'Probá de nuevo en un momento.' : 'Sin conexión a internet.'); return; }
+  if (error) { const m = /QR|temporizador|habilitado/.test(error.message || '') ? error.message : (navigator.onLine ? 'Probá de nuevo en un momento.' : 'Sin conexión a internet.'); overlay('bad', 'No se pudo registrar', m); return; }
   if (data.duplicate) overlay('ok', 'Ya estaba registrado', 'Marcaste hace menos de 2 minutos.');
   else if (data.kind === 'ingreso') overlay('ok', '¡Turno iniciado!', 'Próximo lavado a las ' + hm(data.next));
   else if (data.kind === 'salida') overlay('off', 'Turno terminado', '¡Hasta la próxima!');
@@ -238,12 +272,68 @@ async function mark(kind){
   if (navigator.vibrate) navigator.vibrate(80);
   await loadMe();
 }
-$('#mainbtn').onclick = () => {
-  const s = status();
-  confirmSheet(s.st === 'off' ? 'Iniciar turno' : 'Confirmar lavado',
-    s.st === 'off' ? '¿Ya te lavaste las manos? Al confirmar empieza a correr tu tiempo.' : 'Marcá solo después de lavarte las manos.',
-    s.st === 'off' ? 'Sí, iniciar turno' : 'Sí, me lavé las manos', () => mark('lavado'));
-};
+$('#mainbtn').onclick = () => washFlow();
+
+/* ---------- Lavado: QR de la bacha + temporizador ---------- */
+const STEPS = ['Mojate las manos', 'Poné jabón', 'Frotá las palmas', 'Frotá el dorso', 'Entre los dedos', 'Pulgares y uñas', 'Enjuagá bien', 'Secate con papel'];
+let wStream = null, wRaf = 0, wTick = 0, wEnd = 0, wTotal = 30;
+function washShow(part){ $('#wash').hidden = false; $('#wscan').hidden = part !== 'scan'; $('#wtimer').hidden = part !== 'timer'; }
+function washClose(){ stopCam(); clearInterval(wTick); $('#wash').hidden = true; }
+$('#wclose').onclick = washClose;
+function stopCam(){ cancelAnimationFrame(wRaf); if (wStream) { wStream.getTracks().forEach(t => t.stop()); wStream = null; } }
+async function washFlow(){
+  unlockAudio();
+  $('#wtitle').textContent = status().st === 'off' ? 'Iniciar turno' : 'Lavado de manos';
+  $('#werr').textContent = ''; $('#werr2').textContent = '';
+  if (cfg.require_qr === false) return startTimer(null);
+  washShow('scan');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('#werr').textContent = 'Este celular no permite usar la cámara desde la app. Pedile al encargado que registre tu lavado.'; return; }
+  try {
+    wStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    const v = $('#wvid'); v.srcObject = wStream; await v.play().catch(() => {});
+    scanLoop();
+  } catch (e) {
+    $('#werr').textContent = 'No se pudo abrir la cámara. Permití el acceso a la cámara para esta app en los ajustes del celular y volvé a intentar.';
+  }
+}
+function scanLoop(){
+  const v = $('#wvid'), c = $('#wcan'), ctx = c.getContext('2d', { willReadFrequently: true });
+  const step = () => {
+    if (!wStream) return;
+    if (v.readyState >= 2 && v.videoWidth) {
+      const w = 480, h = Math.round(v.videoHeight * w / v.videoWidth); c.width = w; c.height = h;
+      ctx.drawImage(v, 0, 0, w, h);
+      const code = window.jsQR ? jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' }) : null;
+      if (code && code.data) {
+        const m = code.data.match(/^LAVADO-BACHA:([A-Za-z0-9]+)$/);
+        if (m) { stopCam(); if (navigator.vibrate) navigator.vibrate(60); return startTimer(m[1]); }
+        $('#werr').textContent = 'Ese QR no es el de la bacha.';
+      }
+    }
+    wRaf = requestAnimationFrame(step);
+  };
+  wRaf = requestAnimationFrame(step);
+}
+async function startTimer(token){
+  const { data, error } = await sb.rpc('start_wash', { p_token: token });
+  if (error) { washShow('scan'); $('#werr').textContent = /QR/.test(error.message) ? error.message : 'No se pudo iniciar. Revisá tu conexión.'; if (cfg.require_qr !== false) setTimeout(washFlow, 1800); return; }
+  wTotal = Math.max(0, data.seconds || 0); wEnd = Date.now() + wTotal * 1000;
+  $('#wsink').textContent = data.sink ? '📍 ' + data.sink : '';
+  washShow('timer');
+  const ok = $('#wok'); ok.disabled = true; ok.textContent = 'Lavate las manos…';
+  const C = 326.7;
+  const draw = () => {
+    const left = Math.max(0, wEnd - Date.now()), sec = Math.ceil(left / 1000);
+    $('#wsec').textContent = sec;
+    $('#warc').setAttribute('stroke-dashoffset', wTotal ? (C * (1 - left / (wTotal * 1000))).toFixed(1) : C);
+    const i = wTotal ? Math.min(STEPS.length - 1, Math.floor((1 - left / (wTotal * 1000)) * STEPS.length)) : STEPS.length - 1;
+    $('#wstep').textContent = left > 0 ? STEPS[i] : '¡Listo!';
+    if (left <= 0) { clearInterval(wTick); ok.disabled = false; ok.textContent = status().st === 'off' ? '✔ Iniciar turno' : '✔ Me lavé las manos';
+      if (navigator.vibrate) navigator.vibrate([120, 80, 120]); try { if (actx) { tone(880, 0, .25, 'sine'); } } catch(e){} }
+  };
+  clearInterval(wTick); draw(); wTick = setInterval(draw, 250);
+}
+$('#wok').onclick = async () => { $('#wok').disabled = true; washClose(); await mark('lavado'); };
 $('#outbtn').onclick = () => confirmSheet('Terminar turno', 'Dejás de recibir avisos hasta tu próximo ingreso.', 'Terminar turno', () => mark('salida'));
 function confirmSheet(title, text, ok, fn){
   const m = $('#modal');
