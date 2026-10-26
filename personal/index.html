@@ -260,7 +260,7 @@ function render(){
     $('#tm').textContent = clock(s.left);
     $('#ts').textContent = s.st === 'bad' ? 'Vencido' : s.st === 'warn' ? 'Por vencer' : 'Para tu próximo lavado';
     $('#msg').textContent = s.st === 'bad' ? '¡Lavate las manos ahora y marcá!' : s.st === 'warn' ? 'Te quedan menos de ' + cfg.aviso + ' min. Andá a lavarte.' : 'Último lavado ' + hm(me.last_wash) + ' · próximo a las ' + hm(Date.parse(me.last_wash) + s.iv);
-    $('#mainbtn').textContent = '🧼 Me lavé las manos'; $('#outbtn').hidden = false;
+    $('#mainbtn').textContent = '🧼 Lavarme las manos'; $('#outbtn').hidden = false;
   }
   if (lastState && lastState !== s.st && (s.st === 'warn' || s.st === 'bad')) alarm(s.st);
   lastState = s.st;
