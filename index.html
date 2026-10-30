@@ -253,7 +253,7 @@ function vPersonal(){
   h += `<div class="form" style="justify-content:space-between"><h2 style="margin:0">Personal (${active().length})</h2><input class="search" id="q" placeholder="Buscar por nombre o código" value="${esc(S.q)}"></div>`;
   if (noAcc) h += `<p class="muted">${noAcc} ${noAcc === 1 ? 'persona todavía no tiene' : 'personas todavía no tienen'} PIN. Tocá "Dar PIN" para crear su acceso a la app.</p>`;
   h += list.length ? `<div class="list">${list.map(p => `<div class="row"><div class="grow"><div class="nm">${esc(p.name)}</div>
-      <div class="muted num" style="font-size:.85rem">Código ${p.code} · ${p.auth_user ? (S.subs[p.id] ? '<span style="color:var(--ok)">app con avisos</span>' : 'tiene PIN, sin avisos activados') : '<span style="color:var(--warn)">sin PIN</span>'}</div></div>
+      <div class="muted num" style="font-size:.85rem">Código ${p.code} · ${p.auth_user ? (S.subs[p.id] ? '<span style="color:var(--ok)">app con avisos</span>' : 'tiene acceso, sin avisos activados') : '<span style="color:var(--warn)">sin PIN</span>'}${p.passkey_at ? ' · 👆 entra con huella' : ''}</div></div>
       <select id="g-${p.id}" data-grp="${p.id}" aria-label="Sector de ${esc(p.name)}"><option value="cocina"${p.grp === 'cocina' ? ' selected' : ''}>Cocina</option><option value="general"${p.grp !== 'cocina' ? ' selected' : ''}>Resto</option></select>
       <div class="acts">${p.auth_user ? `<button class="btn sm" data-seepin="${p.id}">👁️ Ver PIN</button>` : ''}<button class="btn sm${p.auth_user ? ' ghost' : ''}" data-pin="${p.id}">${p.auth_user ? 'Cambiar PIN' : 'Dar PIN'}</button>
       ${S.subs[p.id] ? `<button class="btn ghost sm" data-test="${p.id}">Probar aviso</button>` : ''}
@@ -392,6 +392,13 @@ function credModal(p, pin, title){
   $('#cp').onclick = async () => { try { await navigator.clipboard.writeText(accessMsg(p, pin)); toast('Mensaje copiado'); } catch(e) { toast('No se pudo copiar'); } };
 }
 async function seePin(p){
+  if (p.passkey_at) {
+    openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">👆 Entra con su <b>huella o Face ID</b>, así que su PIN está desactivado.</p>
+      <div class="cred"><span class="lbl">Código</span><b>${p.code}</b></div>
+      <p class="muted" style="margin:0;font-size:.9rem">Si cambió de celular y no puede entrar, tocá <b>Cambiar PIN</b>: se borra la huella, entra con el PIN nuevo y la vuelve a activar.</p>
+      <div class="acts"><button class="btn" id="go">Cambiar PIN</button><button class="btn ghost" data-close>Cerrar</button></div>`);
+    $('#go').onclick = () => pinModal(p); return;
+  }
   const { data, error } = await sb.from('staff_pins').select('pin').eq('staff_id', p.id).maybeSingle();
   if (error) { toast('No se pudo leer el PIN. Revisá la conexión.'); return; }
   if (!data) {
@@ -402,7 +409,7 @@ async function seePin(p){
 }
 function pinModal(p){
   const sug = String(Math.floor(100000 + Math.random() * 900000));
-  openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">${p.auth_user ? 'El PIN anterior deja de funcionar.' : 'Crea su acceso a la app del personal.'}</p>
+  openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">${p.passkey_at ? 'Se borra su huella registrada. Va a entrar con este PIN y después puede volver a activar la huella.' : p.auth_user ? 'El PIN anterior deja de funcionar.' : 'Crea su acceso a la app del personal.'}</p>
     <div class="field"><label class="lbl" for="pinin">PIN de 6 números</label><input id="pinin" inputmode="numeric" maxlength="6" value="${sug}" style="font:1.4rem var(--f-num);letter-spacing:.2em;text-align:center"></div>
     <p class="err" id="pinerr"></p><div class="acts"><button class="btn" id="go">Guardar PIN</button><button class="btn ghost" data-close>Cancelar</button></div>`);
   $('#pinin').oninput = e => { e.target.value = e.target.value.replace(/\D/g, ''); $('#pinerr').textContent = ''; };

@@ -103,6 +103,11 @@ input{font:1.4rem var(--f-num);letter-spacing:.25em;padding:14px;border:1px soli
       <h1>Lavado de manos</h1>
       <p class="muted" style="margin:0">Ingresá con el código y el PIN que te dio tu encargado.</p>
     </div>
+    <div id="pkbox" hidden style="flex-direction:column;gap:10px;margin-bottom:14px">
+      <button class="btn big go" id="pklogin">👆 Entrar con huella</button>
+      <p class="err" id="pkerr" role="alert" style="text-align:center;min-height:0;margin:0"></p>
+      <p class="muted" style="margin:0;text-align:center">o con tu código y PIN</p>
+    </div>
     <form class="card" id="loginf" style="display:flex;flex-direction:column;gap:14px" novalidate>
       <div class="field"><label class="lbl" for="code">Código (5 números)</label><input id="code" inputmode="numeric" autocomplete="username" maxlength="5" pattern="[0-9]*"></div>
       <div class="field"><label class="lbl" for="pin">PIN (6 números)</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="6" pattern="[0-9]*"></div>
@@ -180,6 +185,7 @@ input{font:1.4rem var(--f-num);letter-spacing:.25em;padding:14px;border:1px soli
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13.1.0/dist/bundle/index.umd.min.js"></script>
 <script src="../config.js"></script>
 <script>
 const L = window.LAVADO;
@@ -215,7 +221,7 @@ $('#loginf').addEventListener('submit', async e => {
   err.textContent = ''; $('#lbtn').disabled = true; $('#lbtn').textContent = 'Ingresando…';
   const { error } = await sb.auth.signInWithPassword({ email: `p${code}@${L.emailDomain}`, password: pin });
   $('#lbtn').disabled = false; $('#lbtn').textContent = 'Ingresar';
-  if (error) { err.textContent = /invalid/i.test(error.message) ? 'Código o PIN incorrectos. Si no los recordás, pedíselos a tu encargado.' : 'No hay conexión. Probá de nuevo.'; return; }
+  if (error) { err.textContent = /invalid/i.test(error.message) ? 'Código o PIN incorrectos. Si ya activaste la huella, entrá con el botón de huella. Si no, pedile el PIN a tu encargado.' : 'No hay conexión. Probá de nuevo.'; return; }
   $('#pin').value = '';
   await loadMe();
 });
@@ -233,7 +239,7 @@ async function loadMe(){
   const c = await sb.from('config').select('*').single();
   if (c.data) cfg = c.data;
   await Promise.all([loadToday(), loadTeam()]);
-  show('app'); render(); renderNotif(); resaveSub(); subscribe();
+  show('app'); render(); renderNotif(); resaveSub(); subscribe(); offerPasskey();
 }
 async function loadTeam(){ const { data, error } = await sb.rpc('team_status'); if (!error) team = data || []; }
 function renderTeam(){
@@ -472,6 +478,10 @@ async function renderNotif(){
   const on = $('#non'); if (on) on.onclick = enablePush;
   n.insertAdjacentHTML('beforeend', `<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px"><div class="lbl">Voz</div><p style="margin:6px 0 12px">🗣️ Con la app abierta, una voz dice tu nombre y si estás en amarillo o en rojo.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn${voiceOn ? '' : ' ghost'}" id="vtog" style="flex:1;min-width:140px">${voiceOn ? '🗣️ Voz activada' : '🔇 Voz apagada'}</button><button class="btn ghost" id="vtest" style="flex:1;min-width:140px">Probar voz</button></div></div>`);
+  if (await pkSupported()) n.insertAdjacentHTML('beforeend', `<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px"><div class="lbl">Ingreso con ${bioName()}</div>${me.passkey_at
+      ? `<p style="margin:6px 0 0">✅ Activado. Entrás con tu ${bioName()} y tu PIN ya no sirve.</p>`
+      : `<p style="margin:6px 0 12px">Entrás más rápido y nadie más puede usar tu cuenta.</p><button class="btn go" id="pkreg">Activar ${bioName()}</button>`}</div>`);
+  const pr = $('#pkreg'); if (pr) pr.onclick = pkRegister;
   const vt = $('#vtog'); if (vt) vt.onclick = () => { voiceOn = !voiceOn; try { localStorage.setItem('lavado-voz', voiceOn ? '1' : '0'); } catch(e){} unlockAudio(); if (voiceOn) speak('Voz activada'); renderNotif(); };
   const vs = $('#vtest'); if (vs) vs.onclick = () => { unlockAudio(); speak(voiceMsg('warn')); setTimeout(() => speak(voiceMsg('bad')), 3000); };
   const t = $('#ntest'); if (t) t.onclick = async () => { const reg = swReg || await navigator.serviceWorker.ready; reg.showNotification('🔔 Prueba de aviso', { body: 'Así te va a llegar el aviso de lavado de manos.', icon: 'icon-192.png', badge: 'icon-192.png', vibrate: [300,150,300], tag: 'prueba' }); };
@@ -496,6 +506,58 @@ async function resaveSub(){
     const reg = swReg || await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (!sub) return;
     const j = sub.toJSON(); await sb.rpc('save_sub', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
   } catch(e){}
+}
+
+/* ---------- Ingreso con huella / Face ID ---------- */
+const PKW = () => window.SimpleWebAuthnBrowser;
+const bioName = () => isIOS() ? 'Face ID' : 'huella';
+async function pkSupported(){ try { return !!(window.PublicKeyCredential && PKW() && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch(e) { return false; } }
+async function fnCall(body){
+  const { data, error } = await sb.functions.invoke('passkey', { body });
+  if (error) { let m = 'No hay conexión. Probá de nuevo.'; try { const j = await error.context.json(); m = j.error || m; } catch(e){} throw new Error(m); }
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+const pkCancelled = e => e && (e.name === 'NotAllowedError' || e.name === 'AbortError');
+async function pkLogin(){
+  const b = $('#pklogin'), err = $('#pkerr'); err.textContent = ''; b.disabled = true; b.textContent = 'Esperando tu ' + bioName() + '…';
+  try {
+    const o = await fnCall({ action: 'auth_options' });
+    const resp = await PKW().startAuthentication({ optionsJSON: o.options });
+    const v = await fnCall({ action: 'auth_verify', cid: o.cid, response: resp });
+    const { error } = await sb.auth.verifyOtp({ token_hash: v.token_hash, type: 'magiclink' });
+    if (error) throw new Error('No se pudo iniciar la sesión. Probá de nuevo.');
+    await loadMe();
+  } catch (e) {
+    err.textContent = pkCancelled(e) ? 'Se canceló. Probá de nuevo o entrá con tu código y PIN.' : (e.message || 'No se pudo entrar. Probá de nuevo.');
+  }
+  b.disabled = false; renderPkBox();
+}
+async function pkRegister(){
+  try {
+    const o = await fnCall({ action: 'reg_options' });
+    const att = await PKW().startRegistration({ optionsJSON: o.options });
+    await fnCall({ action: 'reg_verify', cid: o.cid, response: att, device: navigator.userAgent });
+    overlay('ok', '👆 ' + (isIOS() ? 'Face ID activado' : 'Huella activada'), 'Desde ahora entrás con tu ' + bioName() + '. Tu PIN ya no sirve.');
+    await loadMe();
+  } catch (e) {
+    if (e && e.name === 'InvalidStateError') { overlay('ok', 'Ya estaba activado', 'Este celular ya tiene tu ' + bioName() + ' registrada.'); return; }
+    overlay('bad', 'No se pudo activar', pkCancelled(e) ? 'Se canceló. Podés activarlo después desde la app.' : (e.message || 'Probá de nuevo.'));
+  }
+}
+async function renderPkBox(){
+  const ok = await pkSupported();
+  $('#pkbox').hidden = !ok; $('#pkbox').style.display = ok ? 'flex' : '';
+  $('#pklogin').textContent = isIOS() ? '🙂 Entrar con Face ID' : '👆 Entrar con huella';
+}
+$('#pklogin').onclick = pkLogin;
+renderPkBox();
+async function offerPasskey(){
+  if (!me || me.passkey_at) return;
+  let asked = false; try { asked = sessionStorage.getItem('lavado-pk-asked') === '1'; } catch(e){}
+  if (asked || !(await pkSupported())) return;
+  try { sessionStorage.setItem('lavado-pk-asked', '1'); } catch(e){}
+  confirmSheet((isIOS() ? '🙂 Activá Face ID' : '👆 Activá tu huella'), `Entrás más rápido y nadie más puede usar tu cuenta, aunque sepa tu PIN. Después de activarlo, tu PIN deja de funcionar.`, 'Activar ' + bioName(), pkRegister);
 }
 
 /* ---------- Instalar la app ---------- */
