@@ -56,6 +56,7 @@ h2{font:600 1.15rem var(--f-display);margin:22px 0 10px}
 .ok{background:var(--ok-bg);color:var(--ok)}.warn{background:var(--warn-bg);color:var(--warn)}.bad{background:var(--bad-bg);color:var(--bad)}.off{background:var(--off-bg);color:var(--muted)}
 .num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
 .dot{width:12px;height:12px;border-radius:50%;flex:none;display:inline-block}
+.dot.smoke{background:var(--muted)}.smoke{background:var(--off-bg);color:var(--ink)}
 .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
 .tbl{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
@@ -123,7 +124,7 @@ input[type=number]{width:96px}
 <script>
 const L = window.LAVADO;
 const sb = supabase.createClient(L.url, L.anon, { auth: { persistSession: true, autoRefreshToken: true, storageKey: 'lavado-panel' } });
-const S = { sinks: [], staff: [], washes: [], cfg: { cocina: 90, general: 120, aviso: 15, max_turno_h: 10 }, subs: {}, sups: [], view: 'ahora', day: dayKey(new Date()), q: '', chan: null, sound: false, prevWarn: new Set(), prevBad: new Set(), lastRed: 0 };
+const S = { sinks: [], staff: [], washes: [], cfg: { cocina: 90, general: 120, aviso: 15, max_turno_h: 10 }, subs: {}, sups: [], view: 'ahora', day: dayKey(new Date()), q: '', chan: null, sound: false, voice: false, prevWarn: new Set(), prevBad: new Set(), lastRed: 0 };
 const GN = { cocina: 'Cocina', general: 'Resto del personal' };
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -132,11 +133,12 @@ const hm = t => new Date(t).toLocaleTimeString('es-AR', { hour: '2-digit', minut
 function dur(min){ min = Math.max(0, Math.round(min)); const h = Math.floor(min/60), m = min%60; return h ? h+' h '+String(m).padStart(2,'0') : m+' min'; }
 const ivOf = p => p.grp === 'cocina' ? S.cfg.cocina : S.cfg.general;
 function status(p, now = Date.now()){
+  if (p.smoke_at) { const iv = S.cfg.smoke_min || 15, left = iv - (now - Date.parse(p.smoke_at)) / 60000; return { st: left <= 0 ? 'bad' : 'smoke', left, iv, smoke: true }; }
   const iv = ivOf(p), el = (now - Date.parse(p.last_wash || now)) / 60000, left = iv - el;
   return { st: left <= 0 ? 'bad' : left <= S.cfg.aviso ? 'warn' : 'ok', left, iv };
 }
 const active = () => S.staff.filter(p => p.active);
-const rank = { bad: 0, warn: 1, ok: 2 };
+const rank = { bad: 0, warn: 1, smoke: 2, ok: 3 };
 const onShift = () => active().filter(p => p.on_shift).map(p => ({ p, s: status(p) })).sort((a, b) => rank[a.s.st] - rank[b.s.st] || a.s.left - b.s.left);
 const byId = id => S.staff.find(p => p.id === id);
 function toast(m){ const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2800); }
@@ -201,7 +203,7 @@ function render(){
 }
 
 function vAhora(){
-  const on = onShift(), c = { ok: 0, warn: 0, bad: 0 }; on.forEach(x => c[x.s.st]++);
+  const on = onShift(), c = { ok: 0, warn: 0, bad: 0, smoke: 0 }; on.forEach(x => c[x.s.st]++);
   const today = S.day === dayKey(new Date()), reg = today ? S.washes.filter(w => w.kind === 'lavado') : [], late = reg.filter(w => w.late_min > 0);
   const pct = reg.length ? Math.round((reg.length - late.length) / reg.length * 100) : null;
   const off = active().filter(p => !p.on_shift).sort((a, b) => a.name.localeCompare(b.name, 'es'));
@@ -209,13 +211,13 @@ function vAhora(){
     <div class="stat ok"><span class="lbl">Al día</span><b>${c.ok}</b></div>
     <div class="stat warn"><span class="lbl">Por vencer</span><b>${c.warn}</b></div>
     <div class="stat bad"><span class="lbl">Vencidos</span><b>${c.bad}</b></div>
-    <div class="stat"><span class="lbl">Puntualidad hoy</span><b>${pct === null ? '—' : pct + '%'}</b></div></div>`;
+    <div class="stat"><span class="lbl">Puntualidad hoy</span><b>${pct === null ? '—' : pct + '%'}</b></div></div>${c.smoke ? `<p class="muted" style="margin:10px 0 0">🚬 ${c.smoke} ${c.smoke === 1 ? 'persona en pausa' : 'personas en pausa'} para fumar</p>` : ''}`;
   h += `<h2>En turno (${on.length})</h2>`;
   h += on.length ? `<div class="list">${on.map(({ p, s }) => `<div class="row"><i class="dot ${s.st}"></i>
       <div class="grow"><div class="nm">${esc(p.name)}</div><div class="muted" style="font-size:.85rem">${GN[p.grp]} · último lavado ${hm(p.last_wash)}${S.subs[p.id] ? '' : ' · <span style="color:var(--bad)">sin avisos</span>'}</div></div>
-      <span class="pill ${s.st} num">${s.st === 'bad' ? 'vencido hace ' + dur(-s.left) : 'faltan ' + dur(s.left)}</span>
+      <span class="pill ${s.st} num">${s.st === 'bad' ? (s.smoke ? 'pausa vencida hace ' : 'vencido hace ') + dur(-s.left) : s.smoke ? '🚬 fumando · vuelve ' + hm(Date.parse(p.smoke_at) + s.iv * 60000) : 'faltan ' + dur(s.left)}</span>
       <div class="acts"><button class="btn ghost sm" data-wash="${p.id}">Marcar lavado</button><button class="btn ghost sm" data-out="${p.id}">Salida</button></div></div>`).join('')}</div>
-      <div class="legend"><span><i class="dot ok"></i>Al día</span><span><i class="dot warn"></i>Faltan ${S.cfg.aviso} min o menos</span><span><i class="dot bad"></i>Vencido</span></div>`
+      <div class="legend"><span><i class="dot ok"></i>Al día</span><span><i class="dot warn"></i>Faltan ${S.cfg.aviso} min o menos</span><span><i class="dot bad"></i>Vencido</span><span><i class="dot smoke"></i>En pausa para fumar</span></div>`
     : `<div class="empty">Nadie en turno. Cada persona inicia su turno desde la app en su celular.</div>`;
   h += `<h2>Fuera de turno</h2><p class="muted" style="margin-top:-4px">Para quien no tiene celular: iniciá el turno desde acá y marcá sus lavados en la lista de arriba.</p>`;
   h += off.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px">${off.map(p => `<button class="btn ghost sm" data-start="${p.id}">${esc(p.name)}</button>`).join('')}</div>` : `<p class="muted">Todo el personal está en turno.</p>`;
@@ -238,7 +240,7 @@ function vRegistro(){
     ${ws.map(w => `<tr><td class="num">${hm(w.t)}</td><td>${esc(w.name)}${w.by_supervisor ? ' <span class="muted">(encargado)</span>' : ''}${w.sink_id && sinkName(w.sink_id) ? ' <span class="muted">· ' + esc(sinkName(w.sink_id)) + '</span>' : ''}</td><td>${kindPill(w)}</td></tr>`).join('')}</tbody></table></div>`;
   return h;
 }
-function kindPill(w){ return w.kind === 'ingreso' ? '<span class="pill off">Ingreso</span>' : w.kind === 'salida' ? '<span class="pill off">Salida</span>' : w.kind === 'salida_auto' ? '<span class="pill off">Salida automática</span>' : w.late_min > 0 ? `<span class="pill bad">Tarde ${dur(w.late_min)}</span>` : '<span class="pill ok">A tiempo</span>'; }
+function kindPill(w){ if (w.kind === 'fumar') return '<span class="pill off">🚬 Salió a fumar</span>'; return w.kind === 'ingreso' ? '<span class="pill off">Ingreso</span>' : w.kind === 'salida' ? '<span class="pill off">Salida</span>' : w.kind === 'salida_auto' ? '<span class="pill off">Salida automática</span>' : w.late_min > 0 ? `<span class="pill bad">Tarde ${dur(w.late_min)}</span>` : '<span class="pill ok">A tiempo</span>'; }
 
 function vPersonal(){
   const q = S.q.toLowerCase();
@@ -251,9 +253,9 @@ function vPersonal(){
   h += `<div class="form" style="justify-content:space-between"><h2 style="margin:0">Personal (${active().length})</h2><input class="search" id="q" placeholder="Buscar por nombre o código" value="${esc(S.q)}"></div>`;
   if (noAcc) h += `<p class="muted">${noAcc} ${noAcc === 1 ? 'persona todavía no tiene' : 'personas todavía no tienen'} PIN. Tocá "Dar PIN" para crear su acceso a la app.</p>`;
   h += list.length ? `<div class="list">${list.map(p => `<div class="row"><div class="grow"><div class="nm">${esc(p.name)}</div>
-      <div class="muted num" style="font-size:.85rem">Código ${p.code} · ${p.auth_user ? (S.subs[p.id] ? '<span style="color:var(--ok)">app con avisos</span>' : 'tiene PIN, sin avisos activados') : '<span style="color:var(--warn)">sin PIN</span>'}</div></div>
+      <div class="muted num" style="font-size:.85rem">Código ${p.code} · ${p.auth_user ? (S.subs[p.id] ? '<span style="color:var(--ok)">app con avisos</span>' : 'tiene acceso, sin avisos activados') : '<span style="color:var(--warn)">sin PIN</span>'}${p.passkey_at ? ' · 👆 entra con huella' : ''}</div></div>
       <select id="g-${p.id}" data-grp="${p.id}" aria-label="Sector de ${esc(p.name)}"><option value="cocina"${p.grp === 'cocina' ? ' selected' : ''}>Cocina</option><option value="general"${p.grp !== 'cocina' ? ' selected' : ''}>Resto</option></select>
-      <div class="acts"><button class="btn sm${p.auth_user ? ' ghost' : ''}" data-pin="${p.id}">${p.auth_user ? 'Cambiar PIN' : 'Dar PIN'}</button>
+      <div class="acts">${p.auth_user ? `<button class="btn sm" data-seepin="${p.id}">👁️ Ver PIN</button>` : ''}<button class="btn sm${p.auth_user ? ' ghost' : ''}" data-pin="${p.id}">${p.auth_user ? 'Cambiar PIN' : 'Dar PIN'}</button>
       ${S.subs[p.id] ? `<button class="btn ghost sm" data-test="${p.id}">Probar aviso</button>` : ''}
       <button class="btn danger sm" data-del="${p.id}">Quitar</button></div></div>`).join('')}</div>`
     : `<div class="empty">No hay personas que coincidan.</div>`;
@@ -266,6 +268,7 @@ function vAjustes(){
     <div class="field"><label class="lbl" for="c2">Resto (min)</label><input type="number" id="c2" min="15" max="480" value="${S.cfg.general}"></div>
     <div class="field"><label class="lbl" for="c3">Aviso amarillo (min antes)</label><input type="number" id="c3" min="1" max="60" value="${S.cfg.aviso}"></div>
     <div class="field"><label class="lbl" for="c4">Cierre automático (h)</label><input type="number" id="c4" min="4" max="24" value="${S.cfg.max_turno_h}"></div>
+    <div class="field"><label class="lbl" for="c7">Pausa para fumar (min)</label><input type="number" id="c7" min="5" max="60" value="${S.cfg.smoke_min ?? 15}"></div>
     <div class="field"><label class="lbl" for="c5">Temporizador de lavado (seg)</label><input type="number" id="c5" min="0" max="120" value="${S.cfg.wash_seconds ?? 30}"></div>
     <label style="display:flex;gap:8px;align-items:center;padding-bottom:10px"><input type="checkbox" id="c6"${S.cfg.require_qr !== false ? ' checked' : ''}> Pedir QR de la bacha</label>
     <button class="btn" type="submit">Guardar</button></form>
@@ -286,8 +289,13 @@ function vAjustes(){
   return h;
 }
 
-function soundBar(){ return `<div class="card" style="margin-top:22px;display:flex;flex-wrap:wrap;gap:10px;align-items:center"><div style="flex:1;min-width:200px"><b>Sonido en este dispositivo</b><div class="muted" style="font-size:.85rem">Suena cuando alguien pasa a amarillo o rojo, mientras tengas el panel abierto.</div></div>
-  <button class="btn sm${S.sound ? '' : ' ghost'}" id="snd">${S.sound ? '🔔 Sonido activado' : '🔕 Activar sonido'}</button></div>`; }
+function soundBar(){ return `<div class="card" style="margin-top:22px;display:flex;flex-wrap:wrap;gap:10px;align-items:center"><div style="flex:1;min-width:200px"><b>Sonido en este dispositivo</b><div class="muted" style="font-size:.85rem">Suena y dice el nombre de quien pasa a amarillo o rojo, mientras tengas el panel abierto.</div></div>
+  <button class="btn sm${S.sound ? '' : ' ghost'}" id="snd">${S.sound ? '🔔 Sonido activado' : '🔕 Activar sonido'}</button>
+  <button class="btn sm${S.voice ? '' : ' ghost'}" id="voz">${S.voice ? '🗣️ Voz activada' : '🗣️ Activar voz'}</button></div>`; }
+function fullName(n){ const [ap, no] = String(n || '').split(','); const cap = x => x.toLowerCase().replace(/(^|[\s-])\S/g, c => c.toUpperCase());
+  return cap(((no || '').trim().split(' ')[0] + ' ' + (ap || '').trim()).trim()); }
+function speak(text){ try { if (!window.speechSynthesis) return; const u = new SpeechSynthesisUtterance(text); u.lang = 'es-AR'; u.rate = 0.95;
+  const v = speechSynthesis.getVoices().find(x => /^es(-|_)/i.test(x.lang)); if (v) u.voice = v; speechSynthesis.speak(u); } catch(e){} }
 
 /* ---------- Ventanas ---------- */
 function openModal(html){ const m = $('#modal'); m.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`; m.hidden = false; m.onclick = e => { if (e.target === m || e.target.dataset.close !== undefined) closeModal(); }; const f = m.querySelector('input,.btn'); f && f.focus(); }
@@ -311,6 +319,7 @@ function bind(){
     openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">¿Registrar su salida del turno? Deja de recibir avisos.</p><div class="acts"><button class="btn" id="go">Registrar salida</button><button class="btn ghost" data-close>Cancelar</button></div>`);
     $('#go').onclick = () => rpc('sup_mark', { p_staff: p.id, p_kind: 'salida' }, 'Salida registrada · ' + p.name); });
   document.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => pinModal(byId(b.dataset.pin)));
+  document.querySelectorAll('[data-seepin]').forEach(b => b.onclick = () => seePin(byId(b.dataset.seepin)));
   document.querySelectorAll('[data-test]').forEach(b => b.onclick = async () => { b.disabled = true; try { const r = await admin({ action: 'test_push', staff_id: b.dataset.test }); toast(r.sent ? `Aviso de prueba enviado a ${r.sent} celular${r.sent > 1 ? 'es' : ''}` : 'No llegó a ningún celular: tiene que volver a activar los avisos'); loadSubs().then(soft); } catch(e) { toast(e.message); } b.disabled = false; });
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { const p = byId(b.dataset.del);
     openModal(`<h3>Quitar a ${esc(p.name)}</h3><p class="muted" style="margin:0">Deja de figurar y pierde el acceso a la app. Su historial se conserva.</p><div class="acts"><button class="btn danger" id="go">Quitar</button><button class="btn ghost" data-close>Cancelar</button></div>`);
@@ -328,9 +337,9 @@ function bind(){
   const csv = $('#csv'); if (csv) csv.onclick = () => { const rows = [['Fecha','Hora','Persona','Sector','Tipo','Minutos tarde','Registró encargado']].concat(S.washes.slice().reverse().map(w => [S.day, hm(w.t), w.name, GN[w.grp], w.kind, w.late_min, w.by_supervisor ? 'sí' : 'no']));
     const blob = new Blob(['﻿' + rows.map(r => r.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(';')).join('\n')], { type: 'text/csv' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'lavado-de-manos-' + S.day + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
-  const cf = $('#cfgf'); if (cf) cf.onsubmit = async e => { e.preventDefault(); const a = +$('#c1').value, b = +$('#c2').value, c = +$('#c3').value, d = +$('#c4').value, ws = +$('#c5').value, rq = $('#c6').checked;
-    if (!(a >= 15 && b >= 15 && c >= 1 && c < Math.min(a, b) && d >= 4 && d <= 24 && ws >= 0 && ws <= 120)) { toast('Revisá los valores: el aviso tiene que ser menor que los intervalos y el temporizador entre 0 y 120 seg.'); return; }
-    const { error } = await sb.from('config').update({ cocina: a, general: b, aviso: c, max_turno_h: d, wash_seconds: ws, require_qr: rq }).eq('id', 1);
+  const cf = $('#cfgf'); if (cf) cf.onsubmit = async e => { e.preventDefault(); const a = +$('#c1').value, b = +$('#c2').value, c = +$('#c3').value, d = +$('#c4').value, ws = +$('#c5').value, rq = $('#c6').checked, sm = +$('#c7').value;
+    if (!(a >= 15 && b >= 15 && c >= 1 && c < Math.min(a, b) && d >= 4 && d <= 24 && ws >= 0 && ws <= 120 && sm >= 5 && sm <= 60)) { toast('Revisá los valores: el aviso menor que los intervalos, el temporizador entre 0 y 120 seg y la pausa entre 5 y 60 min.'); return; }
+    const { error } = await sb.from('config').update({ cocina: a, general: b, aviso: c, max_turno_h: d, wash_seconds: ws, require_qr: rq, smoke_min: sm }).eq('id', 1);
     toast(error ? 'No se pudo guardar.' : 'Intervalos guardados'); document.activeElement.blur(); await loadCfg(); render(); };
   const skf = $('#sinkf'); if (skf) skf.onsubmit = async e => { e.preventDefault(); const n = $('#skn').value.trim(); if (!n) { toast('Escribí un nombre para la bacha.'); return; }
     const { error } = await sb.from('sinks').insert({ name: n }); toast(error ? 'No se pudo agregar la bacha.' : 'Bacha agregada'); document.activeElement.blur(); await loadSinks(); render(); };
@@ -349,6 +358,7 @@ function bind(){
   document.querySelectorAll('[data-rmsup]').forEach(b => b.onclick = () => { openModal(`<h3>Quitar encargado</h3><p class="muted" style="margin:0">Pierde el acceso al panel.</p><div class="acts"><button class="btn danger" id="go">Quitar</button><button class="btn ghost" data-close>Cancelar</button></div>`);
     $('#go').onclick = async () => { try { await admin({ action: 'remove_supervisor', user_id: b.dataset.rmsup }); toast('Encargado quitado'); closeModal(); loadSups(); } catch(e) { toast(e.message); } }; });
   const lo = $('#logout'); if (lo) lo.onclick = async () => { if (S.chan) { sb.removeChannel(S.chan); S.chan = null; } await sb.auth.signOut(); show('login'); };
+  const voz = $('#voz'); if (voz) voz.onclick = () => { S.voice = !S.voice; if (S.voice) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); S.lastRed = Date.now(); speak('Aviso por voz activado'); } render(); };
   const snd = $('#snd'); if (snd) snd.onclick = () => { S.sound = !S.sound; if (S.sound) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); beep('warn'); } render(); };
 }
 const sinkName = id => (S.sinks.find(k => k.id === id) || {}).name || '';
@@ -359,7 +369,7 @@ function sinkPdf(k){
     doc.setFont('helvetica', 'bold'); doc.setFontSize(30); doc.setTextColor(19, 34, 45); doc.text('LAVADO DE MANOS', 105, 32, { align: 'center' });
     doc.setFontSize(16); doc.setTextColor(31, 78, 121); doc.text(k.name, 105, 44, { align: 'center' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(13); doc.setTextColor(90, 107, 118);
-    doc.text('Abrí la app, tocá "Lavarme las manos" y escaneá este código.', 105, 58, { align: 'center' });
+    doc.text('Escaneá este código al empezar y otra vez al terminar de lavarte.', 105, 58, { align: 'center' });
     doc.setFillColor(0, 0, 0); for (let r = 0; r < n; r++) for (let cc = 0; cc < n; cc++) if (q.isDark(r, cc)) doc.rect(x0 + cc * c, y0 + r * c, c + .02, c + .02, 'F');
     doc.setFontSize(14); doc.setTextColor(19, 34, 45);
     ['1. Mojate las manos y poné jabón', '2. Frotá palmas, dorso, entre los dedos, pulgares y uñas', '3. Enjuagá y secate con papel descartable'].forEach((t, i) => doc.text(t, 105, y0 + sz + 18 + i * 9, { align: 'center' }));
@@ -369,21 +379,44 @@ function sinkPdf(k){
 }
 async function loadSups(){ try { const r = await admin({ action: 'list_supervisors' }); S.sups = r.supervisors; if (S.view === 'ajustes') soft(); } catch(e) { toast(e.message); } }
 
+const appLink = () => new URL('../personal/', location.href).href;
+function accessMsg(p, pin){ return `Hola! Esta es tu app de lavado de manos 🧼\n${appLink()}\nCódigo: ${p.code}\nPIN: ${pin}\nAl entrar, tocá "Activar avisos". En iPhone primero agregala a la pantalla de inicio (Compartir → Agregar a inicio).`; }
+function credModal(p, pin, title){
+  $('#modal').hidden = false;
+  $('#modal').innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>${esc(title)}</h3><p class="muted" style="margin:0"><b>${esc(p.name)}</b></p>
+    <div class="cred"><span class="lbl">Código</span><b>${p.code}</b><span class="lbl">PIN</span><b>${esc(pin)}</b></div>
+    <p class="muted" style="margin:0;font-size:.9rem">Link de la app: <span style="word-break:break-all">${esc(appLink())}</span></p>
+    <div class="acts"><a class="btn" style="text-align:center;text-decoration:none;background:#1C7F47;color:#fff" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(accessMsg(p, pin))}">📲 Mandar por WhatsApp</a>
+    <button class="btn ghost" id="cp">Copiar mensaje</button><button class="btn ghost" data-close>Cerrar</button></div></div>`;
+  $('#modal').onclick = e => { if (e.target === $('#modal') || e.target.dataset.close !== undefined) closeModal(); };
+  $('#cp').onclick = async () => { try { await navigator.clipboard.writeText(accessMsg(p, pin)); toast('Mensaje copiado'); } catch(e) { toast('No se pudo copiar'); } };
+}
+async function seePin(p){
+  if (p.passkey_at) {
+    openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">👆 Entra con su <b>huella o Face ID</b>, así que su PIN está desactivado.</p>
+      <div class="cred"><span class="lbl">Código</span><b>${p.code}</b></div>
+      <p class="muted" style="margin:0;font-size:.9rem">Si cambió de celular y no puede entrar, tocá <b>Cambiar PIN</b>: se borra la huella, entra con el PIN nuevo y la vuelve a activar.</p>
+      <div class="acts"><button class="btn" id="go">Cambiar PIN</button><button class="btn ghost" data-close>Cerrar</button></div>`);
+    $('#go').onclick = () => pinModal(p); return;
+  }
+  const { data, error } = await sb.from('staff_pins').select('pin').eq('staff_id', p.id).maybeSingle();
+  if (error) { toast('No se pudo leer el PIN. Revisá la conexión.'); return; }
+  if (!data) {
+    openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">Este PIN se creó antes de que se pudieran ver los PINs, así que no está guardado. Creale uno nuevo y a partir de ahí lo vas a poder ver siempre.</p><div class="acts"><button class="btn" id="go">Crear PIN nuevo</button><button class="btn ghost" data-close>Cancelar</button></div>`);
+    $('#go').onclick = () => pinModal(p); return;
+  }
+  credModal(p, data.pin, 'Acceso a la app');
+}
 function pinModal(p){
   const sug = String(Math.floor(100000 + Math.random() * 900000));
-  openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">${p.auth_user ? 'El PIN anterior deja de funcionar.' : 'Crea su acceso a la app del personal.'}</p>
+  openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">${p.passkey_at ? 'Se borra su huella registrada. Va a entrar con este PIN y después puede volver a activar la huella.' : p.auth_user ? 'El PIN anterior deja de funcionar.' : 'Crea su acceso a la app del personal.'}</p>
     <div class="field"><label class="lbl" for="pinin">PIN de 6 números</label><input id="pinin" inputmode="numeric" maxlength="6" value="${sug}" style="font:1.4rem var(--f-num);letter-spacing:.2em;text-align:center"></div>
     <p class="err" id="pinerr"></p><div class="acts"><button class="btn" id="go">Guardar PIN</button><button class="btn ghost" data-close>Cancelar</button></div>`);
   $('#pinin').oninput = e => { e.target.value = e.target.value.replace(/\D/g, ''); $('#pinerr').textContent = ''; };
   $('#go').onclick = async () => { const pin = $('#pinin').value; if (!/^[0-9]{6}$/.test(pin)) { $('#pinerr').textContent = 'Tienen que ser 6 números.'; return; }
     $('#go').disabled = true; $('#go').textContent = 'Guardando…';
     try { await admin({ action: 'set_pin', staff_id: p.id, pin });
-      $('#modal').innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>Acceso listo</h3><p class="muted" style="margin:0">Pasale estos datos a <b>${esc(p.name)}</b>. Anotalos: el PIN no se vuelve a mostrar.</p>
-        <div class="cred"><span class="lbl">Código</span><b>${p.code}</b><span class="lbl">PIN</span><b>${pin}</b></div>
-        <p class="muted" style="margin:0;font-size:.9rem">Link de la app: <span id="plink" style="word-break:break-all">${esc(new URL('../personal/', location.href).href)}</span></p>
-        <div class="acts"><button class="btn ghost" id="cp">Copiar mensaje para WhatsApp</button><button class="btn" data-close>Listo</button></div></div>`;
-      $('#cp').onclick = async () => { const txt = `Hola! Esta es tu app de lavado de manos 🧼\n${new URL('../personal/', location.href).href}\nCódigo: ${p.code}\nPIN: ${pin}\nAl entrar, tocá "Activar avisos". En iPhone primero agregala a la pantalla de inicio (Compartir → Agregar a inicio).`;
-        try { await navigator.clipboard.writeText(txt); toast('Mensaje copiado'); } catch(e) { toast('No se pudo copiar'); } };
+      credModal(p, pin, 'Acceso listo');
       loadStaff();
     } catch(e) { $('#pinerr').textContent = e.message; $('#go').disabled = false; $('#go').textContent = 'Guardar PIN'; } };
 }
@@ -393,8 +426,12 @@ let actx;
 function tone(f, st, len, type){ const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.value = f; o.connect(g); g.connect(actx.destination); const t = actx.currentTime + st; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.35, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + len); o.start(t); o.stop(t + len + .05); }
 function beep(kind){ try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); if (kind === 'bad') [0, .32, .64].forEach(s => tone(988, s, .24, 'square')); else { tone(660, 0, .3, 'sine'); tone(880, .38, .4, 'sine'); } } catch(e){} }
 function checkAlarms(){ const on = onShift(), warn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)), bad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id));
-  if (S.sound) { const nb = [...bad].some(id => !S.prevBad.has(id)), nw = [...warn].some(id => !S.prevWarn.has(id)), t = Date.now();
-    if (nb || (bad.size && t - S.lastRed > 300000)) { beep('bad'); S.lastRed = t; } else if (nw) beep('warn'); }
+  if (S.sound || S.voice) { const nb = [...bad].filter(id => !S.prevBad.has(id)), nw = [...warn].filter(id => !S.prevWarn.has(id)), t = Date.now();
+    const name = id => fullName((byId(id) || {}).name);
+    if (nb.length || (bad.size && t - S.lastRed > 300000)) { if (S.sound) beep('bad'); S.lastRed = t;
+      if (S.voice) { const ids = nb.length ? nb : [...bad]; setTimeout(() => ids.forEach(id => speak(name(id) + ', estás en rojo')), S.sound ? 900 : 0); } }
+    if (nw.length) { if (S.sound && !nb.length) beep('warn');
+      if (S.voice) setTimeout(() => nw.forEach(id => speak(name(id) + ', estás en amarillo')), S.sound ? 700 : 0); } }
   S.prevWarn = warn; S.prevBad = bad; }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
