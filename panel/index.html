@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="es">
 <head>
+<meta name="app-version" content="9">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Panel de Lavado de Manos</title>
@@ -132,7 +133,12 @@ function dayKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2
 const hm = t => new Date(t).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 function dur(min){ min = Math.max(0, Math.round(min)); const h = Math.floor(min/60), m = min%60; return h ? h+' h '+String(m).padStart(2,'0') : m+' min'; }
 const ivOf = p => p.grp === 'cocina' ? S.cfg.cocina : S.cfg.general;
-function status(p, now = Date.now()){
+// Hora del servidor: corrige el reloj de esta computadora o celular si está corrido.
+let skew = 0;
+const nowMs = () => Date.now() + skew;
+async function syncClock(){ try { const t0 = Date.now(); const { data } = await sb.rpc('server_now'); const t1 = Date.now(); if (data) skew = Date.parse(data) - (t0 + t1) / 2; } catch(e){} }
+setInterval(syncClock, 600000);
+function status(p, now = nowMs()){
   if (p.smoke_at) { const iv = S.cfg.smoke_min || 15, left = iv - (now - Date.parse(p.smoke_at)) / 60000; return { st: left <= 0 ? 'bad' : 'smoke', left, iv, smoke: true }; }
   const iv = ivOf(p), el = (now - Date.parse(p.last_wash || now)) / 60000, left = iv - el;
   return { st: left <= 0 ? 'bad' : left <= S.cfg.aviso ? 'warn' : 'ok', left, iv };
@@ -160,7 +166,7 @@ async function start(){
   const { data: ok } = await sb.rpc('is_supervisor');
   if (!ok) { await sb.auth.signOut(); show('login'); $('#lerr').textContent = 'Esta cuenta no es de encargado.'; return; }
   show('app'); setView((location.hash || '').slice(1) || 'ahora');
-  await Promise.all([loadStaff(), loadCfg(), loadWashes(), loadSubs(), loadSinks()]);
+  await Promise.all([syncClock(), loadStaff(), loadCfg(), loadWashes(), loadSubs(), loadSinks()]);
   render(); live();
 }
 
@@ -202,16 +208,36 @@ function render(){
   bind();
 }
 
+// Recorre el registro del día y arma, por persona: lavados, atrasos, turnos sin ningún lavado y turnos sin cerrar.
+function dayFacts(ws){
+  const per = {}, asc = ws.slice().sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+  asc.forEach(w => {
+    const r = per[w.staff_id] = per[w.staff_id] || { name: w.name, n: 0, late: 0, maxLate: 0, noWash: 0, noClose: 0, open: false, washed: false };
+    if (w.kind === 'ingreso') { r.open = true; r.washed = false; }
+    else if (w.kind === 'lavado') { r.n++; r.washed = true; }
+    else if (w.kind === 'salida' || w.kind === 'salida_auto') {
+      if (r.open && !r.washed) r.noWash++;
+      if (w.kind === 'salida_auto') r.noClose++;
+      r.open = false;
+    }
+    if ((w.kind === 'lavado' || w.kind === 'salida') && w.late_min > 0) { r.late++; r.maxLate = Math.max(r.maxLate, w.late_min); }
+  });
+  return per;
+}
 function vAhora(){
   const on = onShift(), c = { ok: 0, warn: 0, bad: 0, smoke: 0 }; on.forEach(x => c[x.s.st]++);
-  const today = S.day === dayKey(new Date()), reg = today ? S.washes.filter(w => w.kind === 'lavado') : [], late = reg.filter(w => w.late_min > 0);
+  // Puntualidad: cuenta los lavados y también las salidas (si alguien sale estando vencido, cuenta como tarde).
+  const today = S.day === dayKey(new Date()), reg = today ? S.washes.filter(w => w.kind === 'lavado' || (w.kind === 'salida' && w.late_min > 0)) : [], late = reg.filter(w => w.late_min > 0);
   const pct = reg.length ? Math.round((reg.length - late.length) / reg.length * 100) : null;
+  const facts = today ? Object.values(dayFacts(S.washes)) : [], nw = facts.filter(r => r.noWash).map(r => r.name), nc = facts.filter(r => r.noClose).map(r => r.name);
   const off = active().filter(p => !p.on_shift).sort((a, b) => a.name.localeCompare(b.name, 'es'));
   let h = `<h2>En este momento</h2><div class="sum">
     <div class="stat ok"><span class="lbl">Al día</span><b>${c.ok}</b></div>
     <div class="stat warn"><span class="lbl">Por vencer</span><b>${c.warn}</b></div>
     <div class="stat bad"><span class="lbl">Vencidos</span><b>${c.bad}</b></div>
     <div class="stat"><span class="lbl">Puntualidad hoy</span><b>${pct === null ? '—' : pct + '%'}</b></div></div>${c.smoke ? `<p class="muted" style="margin:10px 0 0">🚬 ${c.smoke} ${c.smoke === 1 ? 'persona en pausa' : 'personas en pausa'} para fumar</p>` : ''}`;
+  if (nw.length) h += `<p style="margin:10px 0 0;color:var(--bad)">⚠️ Turno sin ningún lavado hoy: ${nw.map(esc).join(', ')}</p>`;
+  if (nc.length) h += `<p class="muted" style="margin:6px 0 0">🕐 No cerraron el turno (se cerró solo): ${nc.map(esc).join(', ')}</p>`;
   h += `<h2>En turno (${on.length})</h2>`;
   h += on.length ? `<div class="list">${on.map(({ p, s }) => `<div class="row"><i class="dot ${s.st}"></i>
       <div class="grow"><div class="nm">${esc(p.name)}</div><div class="muted" style="font-size:.85rem">${GN[p.grp]} · último lavado ${hm(p.last_wash)}${S.subs[p.id] ? '' : ' · <span style="color:var(--bad)">sin avisos</span>'}</div></div>
@@ -231,16 +257,16 @@ function vRegistro(){
     <div class="form"><div class="field"><label class="lbl" for="day">Fecha</label><input type="date" id="day" value="${S.day}"></div>
     <button class="btn ghost sm" id="csv"${ws.length ? '' : ' disabled'}>Descargar CSV</button></div></div>`;
   if (!ws.length) return h + `<div class="empty" style="margin-top:14px">Sin registros para esta fecha.</div>`;
-  const per = {};
-  ws.forEach(w => { const k = w.staff_id; per[k] = per[k] || { name: w.name, n: 0, late: 0, maxLate: 0 }; if (w.kind === 'lavado') { per[k].n++; if (w.late_min > 0) { per[k].late++; per[k].maxLate = Math.max(per[k].maxLate, w.late_min); } } });
-  const pr = Object.values(per).sort((a, b) => b.late - a.late || a.name.localeCompare(b.name, 'es'));
-  h += `<h2>Resumen por persona</h2><div class="list tbl"><table><thead><tr><th>Persona</th><th>Lavados</th><th>Tarde</th><th>Mayor retraso</th></tr></thead><tbody>
-    ${pr.map(r => `<tr><td>${esc(r.name)}</td><td>${r.n}</td><td style="color:${r.late ? 'var(--bad)' : 'inherit'}">${r.late}</td><td>${r.maxLate ? dur(r.maxLate) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+  const pr = Object.values(dayFacts(ws)).sort((a, b) => (b.noWash - a.noWash) || (b.late - a.late) || a.name.localeCompare(b.name, 'es'));
+  const red = v => `style="color:${v ? 'var(--bad)' : 'inherit'}"`;
+  h += `<h2>Resumen por persona</h2><div class="list tbl"><table><thead><tr><th>Persona</th><th>Lavados</th><th>Tarde</th><th>Mayor retraso</th><th>Turno sin lavar</th><th>No cerró turno</th></tr></thead><tbody>
+    ${pr.map(r => `<tr><td>${esc(r.name)}</td><td>${r.n}</td><td ${red(r.late)}>${r.late}</td><td>${r.maxLate ? dur(r.maxLate) : '—'}</td><td ${red(r.noWash)}>${r.noWash || '—'}</td><td>${r.noClose || '—'}</td></tr>`).join('')}</tbody></table></div>
+    <p class="muted" style="font-size:.85rem">"Tarde" incluye las salidas con el lavado vencido. "Turno sin lavar": inició y terminó el turno sin ningún lavado.</p>`;
   h += `<h2>Detalle</h2><div class="list tbl"><table><thead><tr><th>Hora</th><th>Persona</th><th>Estado</th></tr></thead><tbody>
     ${ws.map(w => `<tr><td class="num">${hm(w.t)}</td><td>${esc(w.name)}${w.by_supervisor ? ' <span class="muted">(encargado)</span>' : ''}${w.sink_id && sinkName(w.sink_id) ? ' <span class="muted">· ' + esc(sinkName(w.sink_id)) + '</span>' : ''}</td><td>${kindPill(w)}</td></tr>`).join('')}</tbody></table></div>`;
   return h;
 }
-function kindPill(w){ if (w.kind === 'fumar') return '<span class="pill off">🚬 Salió a fumar</span>'; return w.kind === 'ingreso' ? '<span class="pill off">Ingreso</span>' : w.kind === 'salida' ? '<span class="pill off">Salida</span>' : w.kind === 'salida_auto' ? '<span class="pill off">Salida automática</span>' : w.late_min > 0 ? `<span class="pill bad">Tarde ${dur(w.late_min)}</span>` : '<span class="pill ok">A tiempo</span>'; }
+function kindPill(w){ if (w.kind === 'fumar') return '<span class="pill off">🚬 Salió a fumar</span>'; return w.kind === 'ingreso' ? '<span class="pill off">Ingreso</span>' : w.kind === 'salida' ? (w.late_min > 0 ? `<span class="pill bad">Salida · vencido ${dur(w.late_min)}</span>` : '<span class="pill off">Salida</span>') : w.kind === 'salida_auto' ? '<span class="pill bad">No cerró el turno</span>' : w.late_min > 0 ? `<span class="pill bad">Tarde ${dur(w.late_min)}</span>` : '<span class="pill ok">A tiempo</span>'; }
 
 function vPersonal(){
   const q = S.q.toLowerCase();
@@ -285,6 +311,8 @@ function vAjustes(){
     <div class="field"><label class="lbl" for="se">Mail</label><input id="se" type="email"></div>
     <div class="field"><label class="lbl" for="sp">Contraseña inicial</label><input id="sp" type="text" minlength="8" placeholder="mín. 8 caracteres"></div>
     <button class="btn" type="submit">Agregar</button></form>
+    <h2>Historial de cambios</h2><p class="muted" style="margin-top:-4px">Quién marcó, cambió o miró qué desde este panel. No se puede borrar.</p>
+    <button class="btn ghost" id="auditbtn">Ver historial de cambios</button>
     <h2>Sesión</h2><button class="btn ghost" id="logout">Cerrar sesión</button>`;
   return h;
 }
@@ -334,8 +362,8 @@ function bind(){
     $('#nm').value = ''; $('#nm').blur(); toast(n + ' agregado/a · código ' + c); await loadStaff(); render(); };
   const q = $('#q'); if (q) q.oninput = () => { S.q = q.value; const pos = q.selectionStart; render(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
   const day = $('#day'); if (day) day.onchange = async () => { if (day.value) { S.day = day.value; day.blur(); await loadWashes(); render(); } };
-  const csv = $('#csv'); if (csv) csv.onclick = () => { const rows = [['Fecha','Hora','Persona','Sector','Tipo','Minutos tarde','Registró encargado']].concat(S.washes.slice().reverse().map(w => [S.day, hm(w.t), w.name, GN[w.grp], w.kind, w.late_min, w.by_supervisor ? 'sí' : 'no']));
-    const blob = new Blob(['﻿' + rows.map(r => r.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(';')).join('\n')], { type: 'text/csv' });
+  const csv = $('#csv'); if (csv) csv.onclick = () => { const safe = v => (typeof v === 'string' && /^[=+\-@]/.test(v)) ? "'" + v : v; const rows = [['Fecha','Hora','Persona','Sector','Tipo','Minutos tarde','Registró encargado']].concat(S.washes.slice().reverse().map(w => [S.day, hm(w.t), w.name, GN[w.grp], w.kind, w.late_min, w.by_supervisor ? 'sí' : 'no']));
+    const blob = new Blob(['﻿' + rows.map(r => r.map(x => '"' + String(safe(x)).replace(/"/g, '""') + '"').join(';')).join('\n')], { type: 'text/csv' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'lavado-de-manos-' + S.day + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
   const cf = $('#cfgf'); if (cf) cf.onsubmit = async e => { e.preventDefault(); const a = +$('#c1').value, b = +$('#c2').value, c = +$('#c3').value, d = +$('#c4').value, ws = +$('#c5').value, rq = $('#c6').checked, sm = +$('#c7').value;
     if (!(a >= 15 && b >= 15 && c >= 1 && c < Math.min(a, b) && d >= 4 && d <= 24 && ws >= 0 && ws <= 120 && sm >= 5 && sm <= 60)) { toast('Revisá los valores: el aviso menor que los intervalos, el temporizador entre 0 y 120 seg y la pausa entre 5 y 60 min.'); return; }
@@ -357,6 +385,7 @@ function bind(){
   const sf = $('#supf'); if (sf) sf.onsubmit = async e => { e.preventDefault(); try { await admin({ action: 'add_supervisor', name: $('#sn').value.trim(), email: $('#se').value.trim(), password: $('#sp').value }); toast('Encargado agregado'); document.activeElement.blur(); loadSups(); } catch(er) { toast(er.message); } };
   document.querySelectorAll('[data-rmsup]').forEach(b => b.onclick = () => { openModal(`<h3>Quitar encargado</h3><p class="muted" style="margin:0">Pierde el acceso al panel.</p><div class="acts"><button class="btn danger" id="go">Quitar</button><button class="btn ghost" data-close>Cancelar</button></div>`);
     $('#go').onclick = async () => { try { await admin({ action: 'remove_supervisor', user_id: b.dataset.rmsup }); toast('Encargado quitado'); closeModal(); loadSups(); } catch(e) { toast(e.message); } }; });
+  const ab = $('#auditbtn'); if (ab) ab.onclick = showAudit;
   const lo = $('#logout'); if (lo) lo.onclick = async () => { if (S.chan) { sb.removeChannel(S.chan); S.chan = null; } await sb.auth.signOut(); show('login'); };
   const voz = $('#voz'); if (voz) voz.onclick = () => { S.voice = !S.voice; if (S.voice) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); S.lastRed = Date.now(); speak('Aviso por voz activado'); } render(); };
   const snd = $('#snd'); if (snd) snd.onclick = () => { S.sound = !S.sound; if (S.sound) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); beep('warn'); } render(); };
@@ -391,16 +420,41 @@ function credModal(p, pin, title){
   $('#modal').onclick = e => { if (e.target === $('#modal') || e.target.dataset.close !== undefined) closeModal(); };
   $('#cp').onclick = async () => { try { await navigator.clipboard.writeText(accessMsg(p, pin)); toast('Mensaje copiado'); } catch(e) { toast('No se pudo copiar'); } };
 }
+const AUD = { lavado: 'Marcó un lavado', inicio_turno: 'Inició el turno', salida: 'Marcó la salida', cambio: 'Cambió datos', alta: 'Agregó a la persona', borrado: 'Borró a la persona',
+  ajustes: 'Cambió los ajustes', ver_pin: 'Miró el PIN', pin_nuevo: 'Creó un PIN nuevo', acceso_quitado: 'Quitó el acceso', encargado_alta: 'Agregó un encargado',
+  encargado_baja: 'Quitó un encargado', qr_cambiado: 'Cambió el QR de una bacha', bacha_alta: 'Agregó una bacha', bacha_quitada: 'Quitó una bacha',
+  bacha_renombrada: 'Renombró una bacha', bacha_borrada: 'Borró una bacha' };
+const FLD = { name: 'nombre', grp: 'sector', code: 'código', active: 'habilitado', on_shift: 'en turno', last_wash: 'último lavado', smoke_at: 'pausa', shift_start: 'inicio de turno',
+  cocina: 'intervalo cocina', general: 'intervalo resto', aviso: 'aviso amarillo', max_turno_h: 'cierre automático', wash_seconds: 'temporizador', require_qr: 'QR obligatorio', smoke_min: 'pausa para fumar', double_qr: 'doble QR' };
+function audDetail(a){
+  const d = a.detail || {};
+  if (a.action === 'cambio' || a.action === 'ajustes') return Object.keys(d).map(k => FLD[k] || k).join(', ');
+  if (d.bacha) return d.bacha; if (d.ahora) return d.antes + ' → ' + d.ahora; if (d.nombre) return d.nombre;
+  if (d.late_min > 0) return 'con ' + dur(d.late_min) + ' de atraso';
+  return '';
+}
+async function showAudit(){
+  openModal(`<h3>Historial de cambios</h3><p class="muted">Cargando…</p><div class="acts"><button class="btn ghost" data-close>Cerrar</button></div>`);
+  const { data, error } = await sb.from('audit').select('*').order('t', { ascending: false }).limit(150);
+  if ($('#modal').hidden) return;
+  const body = error ? '<p class="muted">No se pudo cargar. Revisá la conexión.</p>' : !data.length ? '<p class="muted">Todavía no hay cambios registrados.</p>' :
+    `<div class="list tbl" style="max-height:60vh;overflow:auto"><table><thead><tr><th>Cuándo</th><th>Quién</th><th>Qué</th><th>A quién / detalle</th></tr></thead><tbody>
+    ${data.map(a => `<tr><td class="num">${new Date(a.t).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} ${hm(a.t)}</td><td>${esc(a.actor_name || '')}</td><td>${esc(AUD[a.action] || a.action)}</td><td>${esc([a.staff_name, audDetail(a)].filter(Boolean).join(' · '))}</td></tr>`).join('')}</tbody></table></div>`;
+  openModal(`<h3>Historial de cambios</h3>${body}<div class="acts"><button class="btn ghost" data-close>Cerrar</button></div>`);
+}
 async function seePin(p){
   if (p.passkey_at) {
-    openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">👆 Entra con su <b>huella o Face ID</b>, así que su PIN está desactivado.</p>
-      <div class="cred"><span class="lbl">Código</span><b>${p.code}</b></div>
-      <p class="muted" style="margin:0;font-size:.9rem">Si cambió de celular y no puede entrar, tocá <b>Cambiar PIN</b>: se borra la huella, entra con el PIN nuevo y la vuelve a activar.</p>
+    const { data: pk } = await sb.rpc('get_pin', { p_staff: p.id });
+    openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">👆 Entra con su <b>huella o Face ID</b>. El PIN sigue sirviendo de respaldo.</p>
+      <div class="cred"><span class="lbl">Código</span><b>${p.code}</b>${pk ? `<span class="lbl">PIN</span><b>${esc(pk)}</b>` : ''}</div>
+      <p class="muted" style="margin:0;font-size:.9rem">Si cambió de celular o el PIN no le funciona, tocá <b>Cambiar PIN</b>: entra con el PIN nuevo y su huella sigue activa.</p>
       <div class="acts"><button class="btn" id="go">Cambiar PIN</button><button class="btn ghost" data-close>Cerrar</button></div>`);
     $('#go').onclick = () => pinModal(p); return;
   }
-  const { data, error } = await sb.from('staff_pins').select('pin').eq('staff_id', p.id).maybeSingle();
+  // Cada vez que se mira un PIN queda registrado en el historial de cambios.
+  const { data: pin, error } = await sb.rpc('get_pin', { p_staff: p.id });
   if (error) { toast('No se pudo leer el PIN. Revisá la conexión.'); return; }
+  const data = pin ? { pin } : null;
   if (!data) {
     openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">Este PIN se creó antes de que se pudieran ver los PINs, así que no está guardado. Creale uno nuevo y a partir de ahí lo vas a poder ver siempre.</p><div class="acts"><button class="btn" id="go">Crear PIN nuevo</button><button class="btn ghost" data-close>Cancelar</button></div>`);
     $('#go').onclick = () => pinModal(p); return;
@@ -409,7 +463,7 @@ async function seePin(p){
 }
 function pinModal(p){
   const sug = String(Math.floor(100000 + Math.random() * 900000));
-  openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">${p.passkey_at ? 'Se borra su huella registrada. Va a entrar con este PIN y después puede volver a activar la huella.' : p.auth_user ? 'El PIN anterior deja de funcionar.' : 'Crea su acceso a la app del personal.'}</p>
+  openModal(`<h3>${esc(p.name)}</h3><p class="muted" style="margin:0">${p.passkey_at ? 'El PIN anterior deja de funcionar. Su huella sigue activa.' : p.auth_user ? 'El PIN anterior deja de funcionar.' : 'Crea su acceso a la app del personal.'}</p>
     <div class="field"><label class="lbl" for="pinin">PIN de 6 números</label><input id="pinin" inputmode="numeric" maxlength="6" value="${sug}" style="font:1.4rem var(--f-num);letter-spacing:.2em;text-align:center"></div>
     <p class="err" id="pinerr"></p><div class="acts"><button class="btn" id="go">Guardar PIN</button><button class="btn ghost" data-close>Cancelar</button></div>`);
   $('#pinin').oninput = e => { e.target.value = e.target.value.replace(/\D/g, ''); $('#pinerr').textContent = ''; };
