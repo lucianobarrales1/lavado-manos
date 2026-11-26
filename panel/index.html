@@ -369,7 +369,7 @@ function notifyCheck(){
     if (next[p.id].st === s.st || (next[p.id].st === 'bad' && s.st === 'warn')) return;  // ya avisado en este estado
     if (s.st === 'warn' && !S.notifWarn) { next[p.id] = { c, st: 'warn' }; return; }
     if (s.st === 'bad') showNotif('lav-' + p.id, `🔴 ${name}: ${s.smoke ? 'terminó la pausa' : 'lavado vencido'} hace ${dur(-s.left)}`, 'Tiene que lavarse las manos y marcarlo en la app.', true);
-    else showNotif('lav-' + p.id, `🟡 ${name}: vence en ${dur(Math.ceil(s.left))}`, 'Lavado de manos por vencer.', false);
+    else showNotif('lav-' + p.id, `🟡 ${name}: vence en ${dur(Math.ceil(s.left))}`, 'Lavado de manos por vencer.', true);  // queda en pantalla hasta cerrarlo
     next[p.id] = { c, st: s.st };
   });
   LS.set('lav_notif_mem', JSON.stringify(next));
