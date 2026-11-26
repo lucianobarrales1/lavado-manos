@@ -326,7 +326,8 @@ function soundBar(){ return `<div class="card" style="margin-top:22px;display:fl
 const NOTIF_OK = 'Notification' in window;
 const LS = { get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : v; } catch(e){ return d; } }, set(k, v){ try { localStorage.setItem(k, v); } catch(e){} } };
 S.notifOn = LS.get('lav_notif', '1') === '1';      // interruptor general (además del permiso del navegador)
-S.notifWarn = LS.get('lav_notif_warn', '1') === '1'; // avisos de amarillo (los de rojo siempre van)
+S.notifWarn = LS.get('lav_notif_warn', '1') === '1'; // avisos de amarillo
+S.notifRed = LS.get('lav_notif_red', '1') === '1';   // avisos de rojo
 function notifBar(){
   if (!NOTIF_OK) return `<div class="card" style="margin-top:12px"><b>Avisos en la computadora</b><div class="muted" style="font-size:.85rem">Este navegador no permite avisos. Usá Edge o Chrome.</div></div>`;
   const perm = Notification.permission, act = perm === 'granted' && S.notifOn;
@@ -335,7 +336,8 @@ function notifBar(){
     : 'Recibí un aviso de Windows cuando alguien pasa a amarillo o rojo, aunque el panel esté minimizado.';
   return `<div class="card" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center"><div style="flex:1;min-width:200px"><b>Avisos en la computadora</b><div class="muted" style="font-size:.85rem">${txt}</div></div>
     ${perm === 'denied' ? '' : `<button class="btn sm${act ? '' : ' ghost'}" id="ntf">${act ? '🔔 Avisos activados' : '🔔 Activar avisos'}</button>`}
-    ${act ? `<label style="display:flex;gap:6px;align-items:center;font-size:.9rem"><input type="checkbox" id="ntfw"${S.notifWarn ? ' checked' : ''}> Avisar también en amarillo</label>` : ''}</div>`;
+    ${act ? `<div style="display:flex;flex-direction:column;gap:4px"><label style="display:flex;gap:6px;align-items:center;font-size:.9rem"><input type="checkbox" id="ntfr"${S.notifRed ? ' checked' : ''}> Avisar en rojo</label>
+      <label style="display:flex;gap:6px;align-items:center;font-size:.9rem"><input type="checkbox" id="ntfw"${S.notifWarn ? ' checked' : ''}> Avisar en amarillo</label></div>` : ''}</div>`;
 }
 async function toggleNotif(){
   if (Notification.permission !== 'granted') {
@@ -368,6 +370,7 @@ function notifyCheck(){
     next[p.id] = prev && prev.c === c ? prev : { c, st: null };
     if (next[p.id].st === s.st || (next[p.id].st === 'bad' && s.st === 'warn')) return;  // ya avisado en este estado
     if (s.st === 'warn' && !S.notifWarn) { next[p.id] = { c, st: 'warn' }; return; }
+    if (s.st === 'bad' && !S.notifRed) { next[p.id] = { c, st: 'bad' }; return; }  // apagado: no avisa ni lo hace después
     if (s.st === 'bad') showNotif('lav-' + p.id, `🔴 ${name}: ${s.smoke ? 'terminó la pausa' : 'lavado vencido'} hace ${dur(-s.left)}`, 'Tiene que lavarse las manos y marcarlo en la app.', true);
     else showNotif('lav-' + p.id, `🟡 ${name}: vence en ${dur(Math.ceil(s.left))}`, 'Lavado de manos por vencer.', true);  // queda en pantalla hasta cerrarlo
     next[p.id] = { c, st: s.st };
@@ -445,6 +448,7 @@ function bind(){
   const voz = $('#voz'); if (voz) voz.onclick = () => { S.voice = !S.voice; if (S.voice) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); S.lastRed = Date.now(); speak('Aviso por voz activado'); } render(); };
   const ntf = $('#ntf'); if (ntf) ntf.onclick = toggleNotif;
   const ntfw = $('#ntfw'); if (ntfw) ntfw.onchange = () => { S.notifWarn = ntfw.checked; LS.set('lav_notif_warn', S.notifWarn ? '1' : '0'); };
+  const ntfr = $('#ntfr'); if (ntfr) ntfr.onchange = () => { S.notifRed = ntfr.checked; LS.set('lav_notif_red', S.notifRed ? '1' : '0'); };
   const snd = $('#snd'); if (snd) snd.onclick = () => { S.sound = !S.sound; if (S.sound) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); beep('warn'); } render(); };
 }
 const sinkName = id => (S.sinks.find(k => k.id === id) || {}).name || '';
