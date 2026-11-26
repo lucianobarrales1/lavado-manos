@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta name="app-version" content="9">
+<meta name="app-version" content="10">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Panel de Lavado de Manos</title>
+<title>Panel Lavado de Manos</title>
 <meta name="theme-color" content="#1F4E79">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -191,7 +191,8 @@ function live(){
 const busyInput = () => { const a = document.activeElement; return a && ['INPUT','SELECT'].includes(a.tagName); };
 const soft = () => { if ($('#modal').hidden && !busyInput()) render(); };
 setInterval(() => { checkAlarms(); soft(); }, 15000);
-setInterval(() => { if (!document.hidden && !$('#app').hidden) { loadStaff(); loadSubs(); } }, 60000);
+// Cada 30 s: trae el estado de la base (además del tiempo real) y recalcula colores y avisos, aunque la ventana esté minimizada.
+setInterval(() => { if (!$('#app').hidden) { loadStaff(); if (!document.hidden) loadSubs(); } }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#app').hidden) Promise.all([loadStaff(), loadWashes(), loadSubs()]).then(soft); });
 
 /* ---------- Vistas ---------- */
@@ -247,7 +248,7 @@ function vAhora(){
     : `<div class="empty">Nadie en turno. Cada persona inicia su turno desde la app en su celular.</div>`;
   h += `<h2>Fuera de turno</h2><p class="muted" style="margin-top:-4px">Para quien no tiene celular: iniciá el turno desde acá y marcá sus lavados en la lista de arriba.</p>`;
   h += off.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px">${off.map(p => `<button class="btn ghost sm" data-start="${p.id}">${esc(p.name)}</button>`).join('')}</div>` : `<p class="muted">Todo el personal está en turno.</p>`;
-  h += soundBar();
+  h += soundBar() + notifBar();
   return h;
 }
 
@@ -320,6 +321,60 @@ function vAjustes(){
 function soundBar(){ return `<div class="card" style="margin-top:22px;display:flex;flex-wrap:wrap;gap:10px;align-items:center"><div style="flex:1;min-width:200px"><b>Sonido en este dispositivo</b><div class="muted" style="font-size:.85rem">Suena y dice el nombre de quien pasa a amarillo o rojo, mientras tengas el panel abierto.</div></div>
   <button class="btn sm${S.sound ? '' : ' ghost'}" id="snd">${S.sound ? '🔔 Sonido activado' : '🔕 Activar sonido'}</button>
   <button class="btn sm${S.voice ? '' : ' ghost'}" id="voz">${S.voice ? '🗣️ Voz activada' : '🗣️ Activar voz'}</button></div>`; }
+/* ---------- Avisos del sistema (Windows/Android) e ícono con número ---------- */
+// Funciona con el panel abierto, aunque la ventana esté minimizada. No pide permiso hasta que se toca el botón.
+const NOTIF_OK = 'Notification' in window;
+const LS = { get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : v; } catch(e){ return d; } }, set(k, v){ try { localStorage.setItem(k, v); } catch(e){} } };
+S.notifOn = LS.get('lav_notif', '1') === '1';      // interruptor general (además del permiso del navegador)
+S.notifWarn = LS.get('lav_notif_warn', '1') === '1'; // avisos de amarillo (los de rojo siempre van)
+function notifBar(){
+  if (!NOTIF_OK) return `<div class="card" style="margin-top:12px"><b>Avisos en la computadora</b><div class="muted" style="font-size:.85rem">Este navegador no permite avisos. Usá Edge o Chrome.</div></div>`;
+  const perm = Notification.permission, act = perm === 'granted' && S.notifOn;
+  const txt = perm === 'denied' ? 'Los avisos están bloqueados en este navegador. Tocá el candado al lado de la dirección → Notificaciones → Permitir, y recargá.'
+    : act ? 'Te avisa quién pasa a amarillo o rojo, aunque el panel esté minimizado. Tiene que quedar abierto.'
+    : 'Recibí un aviso de Windows cuando alguien pasa a amarillo o rojo, aunque el panel esté minimizado.';
+  return `<div class="card" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center"><div style="flex:1;min-width:200px"><b>Avisos en la computadora</b><div class="muted" style="font-size:.85rem">${txt}</div></div>
+    ${perm === 'denied' ? '' : `<button class="btn sm${act ? '' : ' ghost'}" id="ntf">${act ? '🔔 Avisos activados' : '🔔 Activar avisos'}</button>`}
+    ${act ? `<label style="display:flex;gap:6px;align-items:center;font-size:.9rem"><input type="checkbox" id="ntfw"${S.notifWarn ? ' checked' : ''}> Avisar también en amarillo</label>` : ''}</div>`;
+}
+async function toggleNotif(){
+  if (Notification.permission !== 'granted') {
+    let r; try { r = await Notification.requestPermission(); } catch(e) { r = 'denied'; }
+    if (r !== 'granted') { toast('Sin permiso no se pueden mostrar avisos.'); render(); return; }
+    S.notifOn = true; LS.set('lav_notif', '1');
+    notifSeed();  // los que ya estaban en amarillo o rojo no se avisan de golpe
+    showNotif('lav-test', '✅ Avisos activados', 'Así se van a ver los avisos de lavado de manos.', false);
+  } else { S.notifOn = !S.notifOn; LS.set('lav_notif', S.notifOn ? '1' : '0'); if (S.notifOn) notifSeed(); }
+  render();
+}
+// Qué se avisó a cada persona: { [id]: { c: ciclo, st: 'warn'|'bad' } }. El ciclo cambia cuando se lava o sale a fumar.
+function notifMem(){ try { return JSON.parse(LS.get('lav_notif_mem', '{}')) || {}; } catch(e){ return {}; } }
+const cycleOf = p => (p.smoke_at ? 's' + p.smoke_at : 'w' + (p.last_wash || p.shift_start || ''));
+function notifSeed(){ const m = {}; onShift().forEach(({ p, s }) => { if (s.st === 'warn' || s.st === 'bad') m[p.id] = { c: cycleOf(p), st: s.st }; }); LS.set('lav_notif_mem', JSON.stringify(m)); }
+async function showNotif(tag, title, body, sticky){
+  const opt = { body, tag, icon: 'icon-192.png', badge: 'icon-192.png', renotify: true, requireInteraction: !!sticky, data: { url: location.href.split('#')[0] + '#ahora' } };
+  try { const reg = await navigator.serviceWorker?.getRegistration(); if (reg) { await reg.showNotification(title, opt); return; } } catch(e){}
+  try { const n = new Notification(title, opt); n.onclick = () => { window.focus(); n.close(); }; } catch(e){}
+}
+function notifyCheck(){
+  const on = onShift(), red = on.filter(x => x.s.st === 'bad').length;
+  // Número en el ícono de la barra de tareas: cuántos están en rojo.
+  try { if (navigator.setAppBadge) { red ? navigator.setAppBadge(red).catch(() => {}) : navigator.clearAppBadge().catch(() => {}); } } catch(e){}
+  if (!NOTIF_OK || Notification.permission !== 'granted' || !S.notifOn) return;
+  const mem = notifMem(), next = {};
+  on.forEach(({ p, s }) => {
+    if (s.st !== 'warn' && s.st !== 'bad') return;           // verde o en pausa: el ciclo se reinicia
+    const c = cycleOf(p), prev = mem[p.id], name = fullName(p.name);
+    next[p.id] = prev && prev.c === c ? prev : { c, st: null };
+    if (next[p.id].st === s.st || (next[p.id].st === 'bad' && s.st === 'warn')) return;  // ya avisado en este estado
+    if (s.st === 'warn' && !S.notifWarn) { next[p.id] = { c, st: 'warn' }; return; }
+    if (s.st === 'bad') showNotif('lav-' + p.id, `🔴 ${name}: ${s.smoke ? 'terminó la pausa' : 'lavado vencido'} hace ${dur(-s.left)}`, 'Tiene que lavarse las manos y marcarlo en la app.', true);
+    else showNotif('lav-' + p.id, `🟡 ${name}: vence en ${dur(Math.ceil(s.left))}`, 'Lavado de manos por vencer.', false);
+    next[p.id] = { c, st: s.st };
+  });
+  LS.set('lav_notif_mem', JSON.stringify(next));
+}
+
 function fullName(n){ const [ap, no] = String(n || '').split(','); const cap = x => x.toLowerCase().replace(/(^|[\s-])\S/g, c => c.toUpperCase());
   return cap(((no || '').trim().split(' ')[0] + ' ' + (ap || '').trim()).trim()); }
 function speak(text){ try { if (!window.speechSynthesis) return; const u = new SpeechSynthesisUtterance(text); u.lang = 'es-AR'; u.rate = 0.95;
@@ -386,8 +441,10 @@ function bind(){
   document.querySelectorAll('[data-rmsup]').forEach(b => b.onclick = () => { openModal(`<h3>Quitar encargado</h3><p class="muted" style="margin:0">Pierde el acceso al panel.</p><div class="acts"><button class="btn danger" id="go">Quitar</button><button class="btn ghost" data-close>Cancelar</button></div>`);
     $('#go').onclick = async () => { try { await admin({ action: 'remove_supervisor', user_id: b.dataset.rmsup }); toast('Encargado quitado'); closeModal(); loadSups(); } catch(e) { toast(e.message); } }; });
   const ab = $('#auditbtn'); if (ab) ab.onclick = showAudit;
-  const lo = $('#logout'); if (lo) lo.onclick = async () => { if (S.chan) { sb.removeChannel(S.chan); S.chan = null; } await sb.auth.signOut(); show('login'); };
+  const lo = $('#logout'); if (lo) lo.onclick = async () => { if (S.chan) { sb.removeChannel(S.chan); S.chan = null; } await sb.auth.signOut(); try { navigator.clearAppBadge && navigator.clearAppBadge().catch(() => {}); } catch(e){} show('login'); };
   const voz = $('#voz'); if (voz) voz.onclick = () => { S.voice = !S.voice; if (S.voice) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); S.lastRed = Date.now(); speak('Aviso por voz activado'); } render(); };
+  const ntf = $('#ntf'); if (ntf) ntf.onclick = toggleNotif;
+  const ntfw = $('#ntfw'); if (ntfw) ntfw.onchange = () => { S.notifWarn = ntfw.checked; LS.set('lav_notif_warn', S.notifWarn ? '1' : '0'); };
   const snd = $('#snd'); if (snd) snd.onclick = () => { S.sound = !S.sound; if (S.sound) { const on = onShift(); S.prevWarn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)); S.prevBad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id)); beep('warn'); } render(); };
 }
 const sinkName = id => (S.sinks.find(k => k.id === id) || {}).name || '';
@@ -479,7 +536,7 @@ function pinModal(p){
 let actx;
 function tone(f, st, len, type){ const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.value = f; o.connect(g); g.connect(actx.destination); const t = actx.currentTime + st; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.35, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + len); o.start(t); o.stop(t + len + .05); }
 function beep(kind){ try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); if (kind === 'bad') [0, .32, .64].forEach(s => tone(988, s, .24, 'square')); else { tone(660, 0, .3, 'sine'); tone(880, .38, .4, 'sine'); } } catch(e){} }
-function checkAlarms(){ const on = onShift(), warn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)), bad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id));
+function checkAlarms(){ notifyCheck(); const on = onShift(), warn = new Set(on.filter(x => x.s.st === 'warn').map(x => x.p.id)), bad = new Set(on.filter(x => x.s.st === 'bad').map(x => x.p.id));
   if (S.sound || S.voice) { const nb = [...bad].filter(id => !S.prevBad.has(id)), nw = [...warn].filter(id => !S.prevWarn.has(id)), t = Date.now();
     const name = id => fullName((byId(id) || {}).name);
     if (nb.length || (bad.size && t - S.lastRed > 300000)) { if (S.sound) beep('bad'); S.lastRed = t;
